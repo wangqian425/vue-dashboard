@@ -9,6 +9,12 @@ module.exports = {
     node: true,
     es6: true,
   },
+  // 百度地图 GL SDK 通过 CDN 异步注入的全局变量，非未定义引用
+  globals: {
+    BMapGL: 'readonly',
+    BMAP_ANCHOR_TOP_RIGHT: 'readonly',
+    BMAP_ANCHOR_BOTTOM_RIGHT: 'readonly'
+  },
   extends: ['plugin:vue/recommended', 'eslint:recommended'],
 
   // add your custom rules here

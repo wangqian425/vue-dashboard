@@ -1,0 +1,134 @@
+<template>
+  <div class="category-tabs">
+    <div
+      v-for="item in normalizedItems"
+      :key="item.value"
+      class="category-tabs__item"
+      :class="{ 'is-active': isActive(item) }"
+      :style="activeStyle(item)"
+      @click="handleClick(item)"
+    >
+      <span class="category-tabs__label">{{ item.label }}</span>
+      <span v-if="item.count !== null && item.count !== undefined" class="category-tabs__count">
+        ({{ item.count }})
+      </span>
+    </div>
+  </div>
+</template>
+
+<script>
+/**
+ * 通用分类 Tab（纯展示，支持 v-model 单选 / 多选）
+ * 字段名通过 fieldMap 自定义：{ label, value, count }
+ * 多选模式（multiple）：与"全部"项双向联动——点"全部"全选、可逐个取消、全部取消自动回到全选
+ */
+export default {
+  name: 'CategoryTabs',
+  props: {
+    // 单选：String/Number；多选（multiple）：Array
+    value: { type: [String, Number, Array], default: '' },
+    items: { type: Array, default: () => [] },
+    fieldMap: {
+      type: Object,
+      default: () => ({ label: 'name', value: 'id', count: 'count' })
+    },
+    activeColor: { type: String, default: '#0088ff' },
+    // 多选模式开关
+    multiple: { type: Boolean, default: false },
+    // 多选模式下"全部"项对应的 value（需与 items 中该项一致）
+    allValue: { type: [String, Number], default: 'all' }
+  },
+  computed: {
+    normalizedItems() {
+      return this.items.map(item => ({
+        label: item[this.fieldMap.label],
+        value: item[this.fieldMap.value],
+        count: item[this.fieldMap.count],
+        raw: item
+      }))
+    },
+    // 多选模式下已选分类集合
+    selectedList() {
+      return Array.isArray(this.value) ? this.value : []
+    },
+    // 除"全部"外的真实分类项
+    realItems() {
+      return this.normalizedItems.filter(item => item.value !== this.allValue)
+    },
+    // 是否全选（即"全部"项的选中态）
+    isAllSelected() {
+      return this.realItems.length > 0 && this.realItems.every(item => this.selectedList.includes(item.value))
+    }
+  },
+  methods: {
+    isActive(item) {
+      if (!this.multiple) return item.value === this.value
+      return item.value === this.allValue ? this.isAllSelected : this.selectedList.includes(item.value)
+    },
+    handleClick(item) {
+      if (!this.multiple) {
+        if (item.value === this.value) return
+        this.$emit('input', item.value)
+        this.$emit('change', item.value, item.raw)
+        return
+      }
+      let next
+      if (item.value === this.allValue) {
+        // 点"全部"：全选所有分类；已全选则不重复触发
+        if (this.isAllSelected) return
+        next = this.realItems.map(i => i.value)
+      } else if (this.selectedList.includes(item.value)) {
+        next = this.selectedList.filter(v => v !== item.value)
+        // 全部取消时自动回到全选（与"全部"联动）
+        if (!next.length) next = this.realItems.map(i => i.value)
+      } else {
+        next = this.selectedList.concat(item.value)
+      }
+      this.$emit('input', next)
+      this.$emit('change', next, item.raw)
+    },
+    activeStyle(item) {
+      if (!this.isActive(item)) return {}
+      return {
+        background: this.activeColor,
+        borderColor: this.activeColor,
+        color: '#fff'
+      }
+    }
+  }
+}
+</script>
+
+<style lang="scss" scoped>
+.category-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+
+  &__item {
+    padding: 4px 12px;
+    font-size: 13px;
+    color: #606266;
+    background: #fff;
+    border: 1px solid #dcdfe6;
+    border-radius: 14px;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+
+    &:hover {
+      color: #0088ff;
+      border-color: #b3d8ff;
+    }
+
+    &.is-active:hover {
+      color: #fff;
+    }
+  }
+
+  &__count {
+    margin-left: 2px;
+    font-size: 12px;
+  }
+}
+</style>

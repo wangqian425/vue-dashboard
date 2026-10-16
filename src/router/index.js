@@ -80,6 +80,18 @@ export const constantRoutes = [
         component: () => import('@/views/dashboard/index'),
         name: 'Dashboard',
         meta: { title: 'Dashboard', icon: 'dashboard', affix: true }
+      },
+      {
+        path: 'homePage',
+        component: () => import('@/views/homePage/index'),
+        name: 'HomePage',
+        meta: { title: '主页', icon: 'home', affix: true }
+      },
+      {
+        path: 'homeOverview',
+        component: () => import('@/views/homePage/overview/index'),
+        name: 'HomeOverview',
+        meta: { title: '首页总览', icon: 'dashboard' }
       }
     ]
   },
