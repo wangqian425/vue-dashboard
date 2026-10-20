@@ -146,17 +146,30 @@ export default {
     }
   }
 
+  /* 列表区：高度超出时内部滚动（min-height:0 是 flex 子项收缩的必要条件） */
   &__body {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
+    overscroll-behavior: contain;
     margin-top: 8px;
     padding: 8px;
-    // background: #f7f9fc;
     border-radius: 8px;
 
-    /* 滚动条默认不出现，hover 时显示细滚动条 */
+    /* 滚动条默认不展示，鼠标移入列表时显示细滚动条 */
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+
+    &:hover {
+      scrollbar-color: rgba(144, 147, 153, 0.4) transparent;
+    }
+
     &::-webkit-scrollbar {
       width: 4px;
+    }
+
+    &::-webkit-scrollbar-track {
+      background: transparent;
     }
 
     &::-webkit-scrollbar-thumb {
@@ -203,6 +216,7 @@ export default {
   margin-right: 10px;
   background: #e9f0fa;
   color: #7d97bd;
+  border-top: 3px solid rgba(192, 196, 204, 1);
 
   &.is-rank-1 {
     border-radius: 4px;

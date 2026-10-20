@@ -15,30 +15,68 @@ import listIcon6 from '../list-icon-6.svg'
 import listIcon7 from '../list-icon-7.svg'
 import listIcon8 from '../list-icon-8.svg'
 
-// 分类定义（id 与后端 category 字段一致；color 用于地图打点与图表）
+import fullscreen1 from '../fullscreen-1.svg'
+import fullscreen2 from '../fullscreen-2.svg'
+
+import pinBlue from '../pin-blue.svg'
+import pinOrange from '../pin-orange.svg'
+import pinGreen from '../pin-green.svg'
+
+export const fullscreenIcon = {
+  1: fullscreen1, // 全屏
+  2: fullscreen2 // 退出
+}
+
+// 地图点位 / 右下角图例图标：三色水滴 pin（蓝=无补贴、橙=有补贴、绿=合规清单，对齐原型）
+export const station_type = {
+  '无补贴': pinBlue,
+  '有补贴': pinOrange,
+  '合规清单': pinGreen
+}
+
+// 行业定义（name 与接口 industry 字段一致；color 用于地图打点与图表，对齐原型配色）
 export const CATEGORIES = [
   { id: 'power', name: '能源电力', color: '#0088ff' },
-  { id: 'energy', name: '节能环保', color: '#67c23a' },
-  { id: 'build', name: '智慧建造', color: '#e6a23c' },
-  { id: 'traffic', name: '绿色交通', color: '#f56c6c' },
-  { id: 'other', name: '其他', color: '#909399' }
+  { id: 'energy', name: '节能环保', color: '#f5a623' },
+  { id: 'build', name: '智慧能源', color: '#9254de' },
+  { id: 'traffic', name: '绿色交通', color: '#2fc25b' },
+  { id: 'other', name: '其他', color: '#6f7ef2' }
 ]
+
+// 行业"全部"标识（industryNum 第一项）
+export const INDUSTRY_ALL = '全部'
+
+// 地图状态筛选（多选集合）→ 项目总览接口 status 参数
+// 接口枚举：1在建; 2运营; 3在建和运营; 4未选择（key 为筛选集合排序后逗号拼接）
+export const STATUS_PARAM_MAP = {
+  '在建,运营': '3',
+  '在建': '1',
+  '运营': '2',
+  '': '4'
+}
 
 // 分类 Tab 字段映射：组件按此读取字段，后端改名只改这里
 export const CATEGORY_FIELD_MAP = { label: 'name', value: 'id', count: 'count' }
 
-// 地区排名维度
+// 地区排名维度（全国 queryNationalRanking 的 rankingType：projectCount·项目个数, rate·达标率, capacity·装机容量, hour·利用小时数）
 export const RANK_TYPES = [
-  { label: '建设个数', value: 'count', unit: '个' },
-  { label: '达标率', value: 'standard', unit: '%' },
-  // { label: '贡献值', value: 'contribution', unit: '万kWh' },
-  { label: '利用小时数', value: 'hours', unit: 'h' }
+  { label: '项目个数', value: 'projectCount', unit: '个' },
+  { label: '达标率', value: 'rate', unit: '%' },
+  { label: '装机容量', value: 'capacity', unit: 'MW' },
+  { label: '利用小时数', value: 'hour', unit: 'h' }
+]
+
+// 地区排名维度（省内 queryRegionRanking，枚举与全国不同：无"项目个数"）
+export const REGION_RANK_TYPES = [
+  { label: '达标率', value: 'rate', unit: '%' },
+  { label: '装机容量', value: 'capacity', unit: 'MW' },
+  { label: '利用小时数', value: 'hour', unit: 'h' }
 ]
 
 // 排名列表字段映射
 export const RANK_FIELD_MAP = { name: 'name', value: 'value', code: 'code' }
 
-// 地图点位字段映射
+// 地图点位字段映射（mapDisplay 接口 projectList → 点位结构）
 export const POINT_FIELD_MAP = {
   id: 'id',
   name: 'name',
@@ -47,12 +85,29 @@ export const POINT_FIELD_MAP = {
   category: 'category'
 }
 
+// 地图点位三分类（补贴属性，key 与接口 natProject/compCatalog 推导结果一致）
+export const POINT_CATEGORIES = [
+  { id: 'noSubsidy', name: '无补贴', color: '#0088ff' },
+  { id: 'subsidy', name: '有补贴', color: '#f5a623' },
+  { id: 'compliance', name: '合规清单', color: '#2fc25b' }
+]
+
+// projectList 分类规则（业务口径）：
+//   无补贴：natProject = 0 或 null
+//   有补贴：natProject = 1 && (compCatalog != 1 或 null)
+//   合规：  natProject = 1 && compCatalog = 1
+export function classifyProject(natProject, compCatalog) {
+  if (Number(natProject) === 1) {
+    return Number(compCatalog) === 1 ? 'compliance' : 'subsidy'
+  }
+  return 'noSubsidy'
+}
+
 // 地图悬浮卡片展示字段（可自由增删）
 export const HOVER_FIELDS = [
-  { label: '项目类型', field: 'categoryName' },
-  { label: '项目状态', field: 'status' },
-  { label: '装机容量', field: 'capacity', unit: 'MW' },
-  { label: '利用小时', field: 'outputHours', unit: 'h' }
+  { label: '城市', field: 'cityName' },
+  { label: '项目编码', field: 'projectCode' },
+  { label: '补贴类型', field: 'categoryName' }
 ]
 
 // 项目卡片展示字段
@@ -76,17 +131,72 @@ export const STATUS_TAG_TYPE = {
 // 能源类型 → 展示文案（项目情况卡片右上角切换：风电/光伏/非标）
 export const ENERGY_LABELS = { wind: '风电', pv: '光伏', nonstandard: '非标' }
 
-// 项目总览顶部指标（左栏卡片），field 对应 overview 接口返回字段；trend: up/down 显示趋势箭头
+// 能源类型 → 接口 operateType（queryOperateDetail：1.风电; 2.光伏; 3.非标）
+export const OPERATE_TYPE_MAP = { wind: '1', pv: '2', nonstandard: '3' }
+
+// 运营项目情况指标：energyType → 指标项（field 对应 queryOperateDetail 返回字段）
+export const OPERATE_METRICS = {
+  wind: [
+    { label: '项目总数', field: 'projectCount', unit: '个' },
+    { label: '装机容量', field: 'capacity', unit: 'MW' },
+    { label: '上网电量', field: 'onlinePower', unit: '万kWh' },
+    { label: '利用小时数', field: 'useHours', unit: 'h' },
+    { label: '结算电价', field: 'electricityPrice', unit: '元/kWh' },
+    { label: '千瓦收入', field: 'income', unit: '元/kW' }
+  ],
+  pv: [
+    { label: '项目总数', field: 'projectCount', unit: '个' },
+    { label: '装机容量', field: 'capacity', unit: 'MW' },
+    { label: '上网电量', field: 'onlinePower', unit: '万kWh' },
+    { label: '利用小时数', field: 'useHours', unit: 'h' },
+    { label: '结算电价', field: 'electricityPrice', unit: '元/kWh' },
+    { label: '千瓦收入', field: 'income', unit: '元/kW' }
+  ],
+  // 非标：指标项不同（oneMetric 语义变为度电收入）
+  nonstandard: [
+    { label: '项目总数', field: 'projectCount', unit: '个' },
+    { label: '填报收入', field: 'writeIncome', unit: '万元' },
+    { label: '账户收入', field: 'accountIncome', unit: '万元' },
+    { label: '达标率', field: 'yield', unit: '%' }
+  ]
+}
+
+// 运营项目情况图表：energyType → 柱线图系列映射
+// 风电/光伏取 powerLineChart（oneMetric=利用小时数）；非标取 nonPowerLineChart（oneMetric=度电收入）；yield=达标率折线
+export const OPERATE_CHART_FIELDS = {
+  wind: [
+    { field: 'oneMetric', label: '利用小时数', type: 'bar' },
+    { field: 'yield', label: '达标率', type: 'line' }
+  ],
+  pv: [
+    { field: 'oneMetric', label: '利用小时数', type: 'bar' },
+    { field: 'yield', label: '达标率', type: 'line' }
+  ],
+  nonstandard: [
+    { field: 'oneMetric', label: '度电收入', type: 'bar' },
+    { field: 'yield', label: '达标率', type: 'line' }
+  ]
+}
+
+// 项目总览顶部指标（左栏卡片），field 对应 queryProjectOverview 接口返回字段；trend: up/down 显示趋势箭头
 export const OVERVIEW_METRICS = [
-  { label: '建设项目', field: 'totalProjects', unit: '个', icon: totalProjectsIcon, trend: 'up' },
-  { label: '运营监测项目', field: 'monitorProjects', unit: '个', icon: monitorProjectsIcon, trend: 'up' }
+  { label: '建设项目', field: 'constructionCount', unit: '个', icon: totalProjectsIcon, trend: 'up' },
+  { label: '运营期项目', field: 'operationCount', unit: '个', icon: monitorProjectsIcon, trend: 'up' }
 ]
 
-// 项目总览玫瑰图字段映射
-export const PIE_FIELD_MAP = { name: 'name', value: 'count' }
+// 项目总览玫瑰图字段映射（industryNum: [{ industry, projectCount, percentage }]）
+export const PIE_FIELD_MAP = { name: 'industry', value: 'projectCount' }
 
-// 建设/运营管理项目图表配色（在建 / 运营 / 未结清项目折线）
+// 建设/运营管理项目图表配色（与 MANAGE_TREND_FIELDS 顺序一一对应）
 export const MANAGE_COLORS = ['#08f', '#0fc98f', '#F56C6C']
+
+// 建设/运营管理项目报表（queryBuildandOperate 返回逐月数组）→ 柱线图系列映射
+// field 对应接口返回字段；type: bar=柱（参与堆叠）/ line=折线
+export const MANAGE_TREND_FIELDS = [
+  { field: 'constructionCount', label: '在建项目', type: 'bar' },
+  { field: 'operationCount', label: '运营项目', type: 'bar' },
+  { field: 'outstandingCount', label: '未结清项目', type: 'line' }
+]
 
 // 风电
 export const SUMMARY_ICONS_1 = {
@@ -123,6 +233,36 @@ export const SUMMARY_ICONS_MAP = {
   nonstandard: SUMMARY_ICON_3
 }
 
+// 地图右上角浮动菜单：项目状态筛选（多选，字段对应点位 status）
+export const BUILD_FILTERS = [
+  { id: '运营', label: '显示运营' },
+  { id: '在建', label: '显示在建' }
+]
+
+// 地图右下角浮动菜单：补贴属性筛选（多选，key 与 station_type 一致）
+export const SUBSIDY_FILTERS = ['无补贴', '有补贴', '合规清单']
+
+// 地图左下角浮动菜单：结算电价（单选，可再点取消=不选；默认风电）
+// field 对应 mapDisplay 返回的省级电价字段，选中后按该字段热力着色
+export const PRICE_OPTIONS = [
+  { id: 'wind', label: '风电结算电价', field: 'avgWindSettlementPrice' },
+  { id: 'pv', label: '光伏结算电价', field: 'avgPvSettlementPrice' },
+  { id: 'benchmark', label: '标杆电价', field: 'benchmarkPrice' }
+]
+
+// 地图悬浮省份浮层展示字段（交互8：鼠标移入省份弹出对应省份电价数据）
+export const REGION_PRICE_FIELDS = [
+  { label: '结算电价', field: 'avgSettlementPrice', unit: '元/kWh' },
+  { label: '风电结算电价', field: 'avgWindSettlementPrice', unit: '元/kWh' },
+  { label: '光伏结算电价', field: 'avgPvSettlementPrice', unit: '元/kWh' },
+  { label: '标杆电价', field: 'benchmarkPrice', unit: '元/kWh' }
+]
+
+// 默认查询月份：当前月的前一个月（yyyy-MM）
+const now = new Date()
+const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+const DEFAULT_MONTH = `${prevMonth.getFullYear()}-${String(prevMonth.getMonth() + 1).padStart(2, '0')}`
+
 // 默认查询条件（energyType 一并纳入，由 query 深度监听统一触发重新请求）
 export const DEFAULT_QUERY = {
   level: 'country', // country | province | city
@@ -130,10 +270,75 @@ export const DEFAULT_QUERY = {
   cityCode: '',
   provinceName: '',
   category: CATEGORIES.map(c => c.id), // 多选分类 id 数组，全选即"全部"
-  month: '',
-  rankType: 'count',
+  month: DEFAULT_MONTH,
+  rankType: 'projectCount',
   energyType: 'wind' // 风电 / 光伏 / 非标
 }
 
 // 层级根节点
 export const ROOT_LEVEL = { code: 'country', name: '全国' }
+
+// 省份字典：full=接口返回全称，name=地图短名，code=行政区划码（排名接口不返回 code，地图下钻加载省份 GeoJSON 需按 code）
+// capital：省会城市名 + 经纬度（供地图省会标记使用）
+export const PROVINCE_LIST = [
+  { code: '110000', full: '北京市', name: '北京', capital: { name: '北京', lng: 116.41, lat: 39.9 }},
+  { code: '120000', full: '天津市', name: '天津', capital: { name: '天津', lng: 117.2, lat: 39.13 }},
+  { code: '130000', full: '河北省', name: '河北', capital: { name: '石家庄', lng: 114.51, lat: 38.04 }},
+  { code: '140000', full: '山西省', name: '山西', capital: { name: '太原', lng: 112.55, lat: 37.87 }},
+  { code: '150000', full: '内蒙古自治区', name: '内蒙古', capital: { name: '呼和浩特', lng: 111.75, lat: 40.84 }},
+  { code: '210000', full: '辽宁省', name: '辽宁', capital: { name: '沈阳', lng: 123.43, lat: 41.8 }},
+  { code: '220000', full: '吉林省', name: '吉林', capital: { name: '长春', lng: 125.32, lat: 43.82 }},
+  { code: '230000', full: '黑龙江省', name: '黑龙江', capital: { name: '哈尔滨', lng: 126.53, lat: 45.8 }},
+  { code: '310000', full: '上海市', name: '上海', capital: { name: '上海', lng: 121.47, lat: 31.23 }},
+  { code: '320000', full: '江苏省', name: '江苏', capital: { name: '南京', lng: 118.78, lat: 32.04 }},
+  { code: '330000', full: '浙江省', name: '浙江', capital: { name: '杭州', lng: 120.15, lat: 30.27 }},
+  { code: '340000', full: '安徽省', name: '安徽', capital: { name: '合肥', lng: 117.28, lat: 31.86 }},
+  { code: '350000', full: '福建省', name: '福建', capital: { name: '福州', lng: 119.3, lat: 26.08 }},
+  { code: '360000', full: '江西省', name: '江西', capital: { name: '南昌', lng: 115.89, lat: 28.68 }},
+  { code: '370000', full: '山东省', name: '山东', capital: { name: '济南', lng: 117.0, lat: 36.65 }},
+  { code: '410000', full: '河南省', name: '河南', capital: { name: '郑州', lng: 113.63, lat: 34.75 }},
+  { code: '420000', full: '湖北省', name: '湖北', capital: { name: '武汉', lng: 114.3, lat: 30.59 }},
+  { code: '430000', full: '湖南省', name: '湖南', capital: { name: '长沙', lng: 112.94, lat: 28.23 }},
+  { code: '440000', full: '广东省', name: '广东', capital: { name: '广州', lng: 113.26, lat: 23.13 }},
+  { code: '450000', full: '广西壮族自治区', name: '广西', capital: { name: '南宁', lng: 108.37, lat: 22.82 }},
+  { code: '460000', full: '海南省', name: '海南', capital: { name: '海口', lng: 110.2, lat: 20.04 }},
+  { code: '500000', full: '重庆市', name: '重庆', capital: { name: '重庆', lng: 106.55, lat: 29.56 }},
+  { code: '510000', full: '四川省', name: '四川', capital: { name: '成都', lng: 104.07, lat: 30.57 }},
+  { code: '520000', full: '贵州省', name: '贵州', capital: { name: '贵阳', lng: 106.63, lat: 26.65 }},
+  { code: '530000', full: '云南省', name: '云南', capital: { name: '昆明', lng: 102.83, lat: 24.88 }},
+  { code: '540000', full: '西藏自治区', name: '西藏', capital: { name: '拉萨', lng: 91.11, lat: 29.65 }},
+  { code: '610000', full: '陕西省', name: '陕西', capital: { name: '西安', lng: 108.95, lat: 34.34 }},
+  { code: '620000', full: '甘肃省', name: '甘肃', capital: { name: '兰州', lng: 103.83, lat: 36.06 }},
+  { code: '630000', full: '青海省', name: '青海', capital: { name: '西宁', lng: 101.78, lat: 36.62 }},
+  { code: '640000', full: '宁夏回族自治区', name: '宁夏', capital: { name: '银川', lng: 106.23, lat: 38.49 }},
+  { code: '650000', full: '新疆维吾尔自治区', name: '新疆', capital: { name: '乌鲁木齐', lng: 87.62, lat: 43.82 }}
+]
+
+// 省会标记点（地图用）：[{ name(省份短名), city(省会名), lng, lat }]
+export const PROVINCE_CAPITALS = PROVINCE_LIST
+  .filter(p => p.capital)
+  .map(p => ({ name: p.name, city: p.capital.name, lng: p.capital.lng, lat: p.capital.lat }))
+
+// 特殊省份拆分区域（业务规则）：下钻到内蒙古/河北时，省内排名/统计按拆分区域展示，不按地市
+export const REGION_SPLIT = {
+  内蒙古: [
+    { name: '蒙西', cities: ['呼和浩特', '包头', '鄂尔多斯', '乌兰察布', '乌海', '巴彦淖尔', '锡林郭勒', '阿拉善'] },
+    { name: '蒙东', cities: ['赤峰', '通辽', '呼伦贝尔', '兴安盟'] }
+  ],
+  河北: [
+    { name: '冀北', cities: ['唐山', '张家口', '秦皇岛', '承德', '廊坊'] },
+    { name: '河北南网', cities: ['石家庄', '保定', '沧州', '衡水', '邢台', '邯郸'] }
+  ]
+}
+
+// 接口全称（山东省/内蒙古自治区）→ 地图短名（山东/内蒙古）
+export function provinceShortName(fullName) {
+  const hit = PROVINCE_LIST.find(p => p.full === fullName)
+  if (hit) return hit.name
+  return String(fullName || '').replace(/(省|市|自治区)$/, '')
+}
+
+// 地图短名/全称 → 省份字典项（含 code/full/name）
+export function findProvince(name) {
+  return PROVINCE_LIST.find(p => p.name === name || p.full === name)
+}

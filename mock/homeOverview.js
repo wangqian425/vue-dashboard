@@ -38,21 +38,21 @@ const PROVINCES = [
   { code: '650000', name: '新疆', lng: 87.617, lat: 43.792 }
 ]
 
-// 分类（颜色用于地图打点与图表）
+// 分类（颜色用于地图打点与图表；name 与接口 industry 字段一致）
 const CATEGORIES = [
   { id: 'power', name: '能源电力', color: '#0088ff', count: 210 },
   { id: 'energy', name: '节能环保', color: '#67c23a', count: 151 },
-  { id: 'build', name: '智慧建造', color: '#e6a23c', count: 186 },
+  { id: 'build', name: '智慧能源', color: '#e6a23c', count: 186 },
   { id: 'traffic', name: '绿色交通', color: '#f56c6c', count: 188 },
   { id: 'other', name: '其他', color: '#909399', count: 99 }
 ]
 
-// 排名维度
-const RANK_TYPES = {
-  count: { label: '建设个数', unit: '个', base: 260 },
-  standard: { label: '达标率', unit: '%', base: 96 },
-  contribution: { label: '贡献值', unit: '万kWh', base: 880 },
-  hours: { label: '利用小时数', unit: 'h', base: 2600 }
+// 排名维度基数（rankingType → 数量级，模拟各维度数值差异）
+const RANK_BASE = {
+  projectCount: { base: 260, min: 0.02 },
+  rate: { base: 100, min: 0.6 },
+  capacity: { base: 2000, min: 0.02 },
+  hour: { base: 3200, min: 0.3 }
 }
 
 function randomInt(min, max, seed) {
@@ -60,54 +60,69 @@ function randomInt(min, max, seed) {
   return Math.floor(min + Math.abs(value - Math.floor(value)) * (max - min))
 }
 
-// 生成地区排名
-function buildRank(level, rankType, provinceCode) {
-  const conf = RANK_TYPES[rankType] || RANK_TYPES.count
-  let list = PROVINCES.map((p, index) => ({
-    code: p.code,
-    name: p.name,
-    value: randomInt(Math.floor(conf.base * 0.2), conf.base, index + 1)
-  }))
-
-  // 下钻到省：返回该省下的地市
-  if (level === 'province' && provinceCode) {
-    list = ['城区', '东区', '西区', '南区', '北区', '新区'].map((name, index) => ({
-      code: `${provinceCode}_${index}`,
-      name,
-      value: randomInt(Math.floor(conf.base * 0.1), conf.base, index + 7)
-    }))
-  }
-
-  return list.sort((a, b) => b.value - a.value).slice(0, 11)
+// 特殊省份拆分区域（业务规则，与前端 config REGION_SPLIT 保持一致）：内蒙古→蒙西/蒙东，河北→冀北/河北南网
+const PROVINCE_SPLIT = {
+  内蒙古: ['蒙西', '蒙东'],
+  河北: ['冀北', '河北南网']
 }
 
-// 生成地图点位
-function buildPoints(level, category, provinceCode) {
-  const source = level === 'province' && provinceCode
-    ? PROVINCES.filter(p => p.code === provinceCode)
-    : PROVINCES
+// 短名 → 接口全称（山东省/内蒙古自治区等）
+function fullProvinceName(name) {
+  const special = {
+    内蒙古: '内蒙古自治区',
+    广西: '广西壮族自治区',
+    西藏: '西藏自治区',
+    宁夏: '宁夏回族自治区',
+    新疆: '新疆维吾尔自治区',
+    北京: '北京市',
+    天津: '天津市',
+    上海: '上海市',
+    重庆: '重庆市'
+  }
+  return special[name] || `${name}省`
+}
 
-  const points = []
-  // 兼容多选：category 可为数组或逗号分隔字符串，'all' 表示全选
-  const catList = Array.isArray(category) ? category : String(category || 'all').split(',')
-  source.forEach((p, pi) => {
-    CATEGORIES.forEach((c, ci) => {
-      if (!catList.includes('all') && !catList.includes(c.id)) return
-      points.push({
-        id: `${p.code}_${c.id}`,
-        name: `${p.name}${c.name}示范项目`,
-        lng: p.lng + (ci - 2) * 0.35,
-        lat: p.lat + (ci - 2) * 0.35,
-        category: c.id,
-        categoryName: c.name,
-        status: ci % 3 === 0 ? '在建' : (ci % 3 === 1 ? '运营' : '未按标准'),
-        capacity: randomInt(20, 300, pi + ci + 3),
-        outputHours: randomInt(800, 3200, pi + ci + 11),
-        income: randomInt(50, 900, pi + ci + 17)
-      })
-    })
-  })
-  return points
+// 生成排名数据：[{ nameType, value }]，按 value 降序
+function buildRankItems(names, rankingType, seedBase) {
+  const conf = RANK_BASE[rankingType] || RANK_BASE.projectCount
+  return names.map((name, i) => ({
+    nameType: name,
+    value: String(randomInt(conf.base * conf.min, conf.base, seedBase + i) / (rankingType === 'rate' ? 10 : 1))
+  })).sort((a, b) => b.value - a.value)
+}
+
+// 生成地图展示数据（mapDisplay）：每省 = 电价汇总 + 项目列表
+// projectList 分类口径（业务规则）：
+//   无补贴：natProject = 0 或 null
+//   有补贴：natProject = 1 && (compCatalog != 1 或 null)
+//   合规：  natProject = 1 && compCatalog = 1
+function buildMapProject(province, seed) {
+  const nat = [0, 1, 1, null][seed % 4]
+  const comp = nat === 1 ? [0, 1, null][seed % 3] : null
+  return {
+    projectName: `${province.name}${seed % 2 === 0 ? '风电' : '光伏'}项目${seed}号`,
+    projectCode: `PJ${province.code}${String(seed).padStart(3, '0')}`,
+    provinceName: fullProvinceName(province.name),
+    cityName: `${province.name}市区`,
+    longitude: String(province.lng + randomInt(-15, 15, seed) / 10),
+    latitude: String(province.lat + randomInt(-15, 15, seed) / 10),
+    natProject: nat === null ? null : String(nat),
+    compCatalog: comp === null ? null : String(comp),
+    pvSettlementPrice: String(randomInt(20, 60, seed) / 100),
+    windSettlementPrice: String(randomInt(20, 60, seed + 5) / 100)
+  }
+}
+
+function buildProvinceGroup(province, seed) {
+  const list = []
+  for (let i = 0; i < 3 + seed % 3; i++) list.push(buildMapProject(province, seed * 10 + i))
+  return {
+    avgSettlementPrice: String(randomInt(30, 60, seed) / 100),
+    avgWindSettlementPrice: String(randomInt(25, 55, seed + 1) / 100),
+    avgPvSettlementPrice: String(randomInt(25, 55, seed + 2) / 100),
+    benchmarkPrice: String(randomInt(25, 50, seed + 3) / 100),
+    projectList: list
+  }
 }
 
 function buildMonths(count) {
@@ -125,138 +140,208 @@ function ok(data) {
 }
 
 module.exports = [
-  // 项目总览
+  // 项目总览（全国/省份）：POST /largeScreen/queryProjectOverview
+  // 入参 { industry, month, provinceName, status }；返回 { constructionCount, operationCount, industryNum }
   {
-    url: '/regulatory_s/project/home/overview',
-    type: 'get',
+    url: '/largeScreen/queryProjectOverview',
+    type: 'post',
     response: config => {
-      const { query } = config
-      const level = query.level || 'country'
-      // 下钻后数值按比例缩小，模拟联动
-      const ratio = level === 'country' ? 1 : (level === 'province' ? 0.08 : 0.01)
-      const categories = [
-        { id: 'all', name: '全部', count: Math.round(814 * ratio) }
-      ].concat(CATEGORIES.map(c => ({
-        id: c.id,
-        name: c.name,
-        count: Math.round(c.count * ratio),
-        color: c.color
-      })))
+      const body = config.body || {}
+      const { industry = '', provinceName = '', status = '3' } = body
+
+      // 省份下钻后数值按比例缩小，模拟联动
+      const ratio = provinceName ? 0.08 : 1
+
+      // 行业基数（对齐原型：能源电力 1136 / 节能环保 1025 / 智慧能源 534 / 绿色交通 261 / 其他 19）
+      const industryCounts = CATEGORIES.map((c, i) => ({
+        industry: c.name,
+        projectCount: Math.round([1136, 1025, 534, 261, 19][i] * ratio)
+      }))
+      const totalCount = industryCounts.reduce((sum, item) => sum + item.projectCount, 0)
+
+      // 全部行：若指定单一行业则取该行业数量，否则取合计
+      const allCount = industry && industry !== '全部'
+        ? (industryCounts.find(i => i.industry === industry) || { projectCount: 0 }).projectCount
+        : totalCount
+
+      // 百分比保留两位小数（字符串，与后端一致）
+      const withPercent = list => list.map(item => Object.assign({}, item, {
+        percentage: totalCount ? ((item.projectCount / totalCount) * 100).toFixed(2) : '0'
+      }))
 
       return ok({
-        totalProjects: Math.round(6220 * ratio),
-        monitorProjects: Math.round(220 * ratio),
-        categories
+        constructionCount: Math.round(6220 * ratio * (status === '2' ? 0.2 : 1)),
+        operationCount: Math.round(220 * ratio * (status === '1' ? 0.2 : 1)),
+        industryNum: [
+          { industry: '全部', projectCount: String(allCount), percentage: '100' }
+        ].concat(withPercent(industryCounts).map(item => Object.assign({}, item, {
+          projectCount: String(item.projectCount)
+        })))
       })
     }
   },
 
-  // 地区排名
+  // 地区排名（全国）：POST /largeScreen/queryNationalRanking
+  // 入参 { industry, month, rankingType, status }；返回 data: [{ nameType(省份全称), value }]
   {
-    url: '/regulatory_s/project/home/regionRank',
-    type: 'get',
+    url: '/largeScreen/queryNationalRanking',
+    type: 'post',
     response: config => {
-      const { query } = config
-      const list = buildRank(query.level, query.rankType, query.provinceCode)
-      return ok({ list })
+      const body = config.body || {}
+      const rankingType = body.rankingType || 'projectCount'
+      return ok(buildRankItems(
+        PROVINCES.map(p => fullProvinceName(p.name)),
+        rankingType,
+        7
+      ))
     }
   },
 
-  // 地图点位
+  // 地区排名（省内）：POST /largeScreen/queryRegionRanking
+  // 入参 { industry, month, provinceName, rankingType, status }；返回 data: [{ nameType(市/区县名称), value }]
+  // 特殊省份按业务规则拆分：内蒙古→蒙西/蒙东，河北→冀北/河北南网
   {
-    url: '/regulatory_s/project/home/mapPoints',
-    type: 'get',
+    url: '/largeScreen/queryRegionRanking',
+    type: 'post',
     response: config => {
-      const { query } = config
-      const list = buildPoints(query.level, query.category, query.provinceCode)
-      return ok({ list })
-    }
-  },
+      const body = config.body || {}
+      const rankingType = body.rankingType || 'projectCount'
+      // provinceName 兼容全称/短名
+      const short = String(body.provinceName || '北京').replace(/(省|市|自治区)$/, '')
 
-  // 建设/运营管理趋势
-  {
-    url: '/regulatory_s/project/home/manageTrend',
-    type: 'get',
-    response: () => {
-      const months = buildMonths(12)
-      return ok({
-        xAxis: months,
-        series: [
-          { name: '在建项目', type: 'bar', data: months.map((m, i) => randomInt(60, 260, i + 2)) },
-          { name: '运营项目', type: 'bar', data: months.map((m, i) => randomInt(40, 200, i + 5)) },
-          { name: '未结清项目', type: 'line', data: months.map((m, i) => randomInt(120, 320, i + 9)) }
-        ]
-      })
-    }
-  },
-
-  // 项目情况指标（按能源类型返回不同指标项：风电/光伏 vs 非标）
-  {
-    url: '/regulatory_s/project/home/projectSummary',
-    type: 'get',
-    response: config => {
-      const { query } = config
-      const ratio = query.level === 'country' ? 1 : 0.1
-      const energy = query.energyType || 'wind'
-      if (energy === 'nonstandard') {
-        return ok({
-          list: [
-            { label: '项目总数', value: Math.round(96 * ratio), unit: '个' },
-            { label: '填报收入', value: 56.8, unit: '万元' },
-            { label: '账户收入', value: 43.2, unit: '万元' },
-            { label: '达标率', value: 92.5, unit: '%' }
-          ]
-        })
+      // 拆分省份：返回拆分区域排名（蒙西/蒙东、冀北/河北南网）
+      const split = PROVINCE_SPLIT[short]
+      if (split) {
+        return ok(buildRankItems(
+          split.map(r => r.name),
+          rankingType,
+          27
+        ))
       }
-      return ok({
-        list: [
-          { label: '项目总数', value: Math.round(385 * ratio), unit: '个' },
-          { label: '装机容量', value: Math.round(340 * ratio), unit: 'MW' },
-          { label: '上网电量', value: Math.round(300 * ratio), unit: '万kWh' },
-          { label: '利用小时数', value: Math.round(2800 / (ratio < 1 ? 2 : 1)), unit: 'h' },
-          { label: '结算电价', value: 4112225, unit: '元/kWh' },
-          { label: '千瓦收入', value: 16211, unit: '元/kW' }
-        ]
-      })
+
+      const suffix = ['东', '南', '西', '北', '城', '郊', '新', '港', '宁', '阳', '州']
+      return ok(buildRankItems(
+        suffix.map(s => `${short}${s}市`),
+        rankingType,
+        17
+      ))
     }
   },
 
-  // 发电利用小时数 / 达标率（柱系列名称随能源类型联动）
+  // 地图展示：POST /largeScreen/mapDisplay
+  // 入参 { industry, month, provinceName, status }
+  // 全国请求（provinceName 空）→ data: 省份数组；省份请求 → data: 单对象（当前省电价汇总 + 项目列表）
   {
-    url: '/regulatory_s/project/home/hoursTrend',
-    type: 'get',
+    url: '/largeScreen/mapDisplay',
+    type: 'post',
     response: config => {
-      const { query } = config
-      const months = buildMonths(12)
-      const energyNames = { wind: '风电', pv: '光伏', nonstandard: '非标' }
-      const energyName = energyNames[query.energyType] || '风电'
-      return ok({
-        xAxis: months,
-        series: [
-          { name: `${energyName}发电利用小时数`, type: 'bar', data: months.map((m, i) => randomInt(900, 2600, i + 4)) },
-          { name: '达标率', type: 'line', yAxisIndex: 1, data: months.map((m, i) => randomInt(70, 99, i + 13)) }
-        ]
-      })
+      const body = config.body || {}
+      if (body.provinceName) {
+        // 省份请求：兼容全称/短名匹配
+        const p = PROVINCES.find(x => body.provinceName.indexOf(x.name) > -1) || PROVINCES[0]
+        return ok(buildProvinceGroup(p, 5))
+      }
+      // 全国请求：各省分组数组
+      return ok(PROVINCES.map((p, i) => buildProvinceGroup(p, i + 2)))
     }
   },
 
-  // 项目列表（下钻后卡片）
+  // 建设/运营管理项目报表：POST /largeScreen/queryBuildandOperate
+  // 入参 { industry, month, provinceName, status }；返回 data: 逐月数组
+  {
+    url: '/largeScreen/queryBuildandOperate',
+    type: 'post',
+    response: config => {
+      const body = config.body || {}
+      const { provinceName = '', status = '3' } = body
+
+      // 省份下钻后数值按比例缩小；状态筛选分别影响在建/运营数量
+      const ratio = provinceName ? 0.08 : 1
+      const statusFactor = field => (status === '1' && field === 'operationCount') || (status === '2' && field === 'constructionCount') ? 0.2 : 1
+
+      const months = buildMonths(12)
+      return ok(months.map((m, i) => ({
+        month: m,
+        constructionCount: Math.round(randomInt(60, 260, i + 2) * ratio * statusFactor('constructionCount')),
+        operationCount: Math.round(randomInt(40, 200, i + 5) * ratio * statusFactor('operationCount')),
+        outstandingCount: Math.round(randomInt(120, 320, i + 9) * ratio)
+      })))
+    }
+  },
+
+  // 运营项目情况：POST /largeScreen/queryOperateDetail
+  // 入参 { industry, month, operateType, provinceName, status }；返回指标 + 指标图表一体
+  {
+    url: '/largeScreen/queryOperateDetail',
+    type: 'post',
+    response: config => {
+      const body = config.body || {}
+      const { provinceName = '', operateType = '1' } = body
+
+      // 省份下钻后数值按比例缩小
+      const ratio = provinceName ? 0.08 : 1
+      const nonstandard = operateType === '3'
+      const months = buildMonths(13)
+
+      // 指标图表：风电/光伏 oneMetric=利用小时数；非标 oneMetric=度电收入（万元/kWh）；yield=达标率
+      const lineChart = months.map((m, i) => ({
+        month: m,
+        oneMetric: nonstandard
+          ? String(randomInt(10, 60, i + 4) / 100)
+          : String(randomInt(1200, 3200, i + 4)),
+        yield: String(randomInt(60, 100, i + 8))
+      }))
+
+      const metrics = nonstandard
+        ? {
+          projectCount: String(Math.round(96 * ratio)),
+          writeIncome: String(randomInt(100, 900, 5) / 10),
+          accountIncome: String(randomInt(80, 700, 9) / 10),
+          yield: String(randomInt(80, 100, 12))
+        }
+        : {
+          projectCount: String(Math.round(385 * ratio)),
+          capacity: String(randomInt(100, 2000, 5) / 10),
+          onlinePower: String(randomInt(5000, 30000, 7)),
+          useHours: String(randomInt(1200, 3200, 11)),
+          electricityPrice: String(randomInt(30, 80, 13) / 100),
+          income: String(randomInt(100, 300, 15) / 10),
+          oneMetric: '0.00'
+        }
+
+      return ok(Object.assign({ msg: '' }, metrics, {
+        powerLineChart: nonstandard ? [] : lineChart,
+        nonPowerLineChart: nonstandard ? lineChart : []
+      }))
+    }
+  },
+
+  // 项目列表（下钻后卡片）：数据源与 mapDisplay 一致（同省项目列表）
   {
     url: '/regulatory_s/project/home/projectList',
     type: 'get',
     response: config => {
       const { query } = config
-      const points = buildPoints(query.level || 'country', query.category, query.provinceCode)
-      const list = points.slice(0, 8).map(p => ({
-        id: p.id,
-        name: p.name,
-        status: p.status,
-        categoryName: p.categoryName,
-        capacity: p.capacity,
-        outputHours: p.outputHours,
-        income: p.income
-      }))
-      return ok({ list, total: points.length })
+      const provinceName = String(query.provinceName || '')
+      const province = provinceName
+        ? (PROVINCES.find(x => provinceName.indexOf(x.name) > -1) || PROVINCES[0])
+        : PROVINCES[0]
+      const seed = 5 + PROVINCES.indexOf(province)
+      const group = buildProvinceGroup(province, seed)
+      const list = (group.projectList || []).slice(0, 8).map(p => {
+        // 分类口径与地图点位一致：无补贴/有补贴/合规清单
+        const nat = Number(p.natProject)
+        const comp = Number(p.compCatalog)
+        const categoryName = nat === 1 ? (comp === 1 ? '合规清单' : '有补贴') : '无补贴'
+        return {
+          id: p.projectCode,
+          name: p.projectName,
+          status: nat % 2 === 0 ? '在建' : '运营',
+          categoryName,
+          cityName: p.cityName
+        }
+      })
+      return ok({ list, total: (group.projectList || []).length })
     }
   }
 ]

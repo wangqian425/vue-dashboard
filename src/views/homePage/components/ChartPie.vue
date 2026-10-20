@@ -32,6 +32,10 @@ export default {
     roseType: { type: [String, Boolean], default: false },
     unit: { type: String, default: '个' },
     showLegend: { type: Boolean, default: true },
+    // 最小可见占比：低于该比例的项抬到最小可见值渲染，避免极小类目（如"其他"）扇区看不见
+    // tooltip / 图例始终显示真实数值与真实占比；传 0 可关闭
+    minVisibleRatio: { type: Number, default: 0.03 },
+    // 需要深度定制时传入，与默认 option 浅合并（优先级更高）
     extraOption: { type: Object, default: () => ({}) }
   },
   data() {
@@ -75,12 +79,28 @@ export default {
         name: item[this.fieldMap.name],
         value: Number(item[this.fieldMap.value]) || 0
       }))
+      const total = items.reduce((sum, i) => sum + i.value, 0)
+
+      // 渲染数据：极小占比项抬到最小可见值保证扇区可见，rawValue 保存真实值
+      const minVisible = total * this.minVisibleRatio
+      const seriesData = items.map(item => ({
+        name: item.name,
+        value: item.value > 0 && item.value < minVisible ? minVisible : item.value,
+        rawValue: item.value
+      }))
+      // 按真实值计算占比（与渲染值无关）
+      const realPercent = value => (total > 0 ? Math.round((value / total) * 100) : 0)
 
       const option = {
         color: this.colors,
         tooltip: {
           trigger: 'item',
-          formatter: params => `${params.name}: ${params.value}${this.unit} (${params.percent}%)`
+          // confine：tooltip 限制在图表内，避免溢出遮挡中心数字与相邻扇区
+          confine: true,
+          formatter: params => {
+            const raw = params.data && params.data.rawValue !== undefined ? params.data.rawValue : params.value
+            return `${params.name}: ${raw}${this.unit} (${realPercent(raw)}%)`
+          }
         },
         legend: this.showLegend
           ? {
@@ -101,11 +121,9 @@ export default {
               }
             },
             formatter: name => {
-              const target = items.find(i => i.name === name)
+              const target = seriesData.find(i => i.name === name)
               if (!target) return name
-              const total = items.reduce((sum, i) => sum + i.value, 0)
-              const pct = total > 0 ? Math.round((target.value / total) * 100) : 0
-              return `{label|${name}}{value|${target.value}${this.unit}(${pct}%)}`
+              return `{label|${name}：}{value|${target.rawValue}${this.unit}(${realPercent(target.rawValue)}%)}`
             }
           }
           : { show: false },
@@ -115,16 +133,20 @@ export default {
             roseType: this.roseType || false,
             radius: this.donut ? ['25%', '68%'] : '55%',
             center: this.showLegend ? ['28%', '50%'] : ['50%', '50%'],
-            // radius: [25, '95%'],
-            // center: ['50%', '38%'],
+            // 扇区之间白色缝隙（原型效果）
+            itemStyle: {
+              borderColor: '#fff',
+              borderWidth: 2
+            },
             avoidLabelOverlap: true,
             label: this.centerText && this.centerText.value !== undefined
               ? {
                 show: true,
                 position: 'center',
                 formatter: () => `${this.centerText.value}`,
-                fontSize: 14,
-                lineHeight: 22,
+                fontSize: 22,
+                fontWeight: 700,
+                lineHeight: 26,
                 color: '#303133'
               }
               : { show: false },
@@ -132,7 +154,7 @@ export default {
               label: { show: this.centerText && this.centerText.value !== undefined }
             },
             labelLine: { show: false },
-            data: items
+            data: seriesData
           }
         ]
       }
@@ -142,6 +164,7 @@ export default {
     // 浅层合并，extraOption 优先级更高（不能用 JSON 序列化，会丢失 formatter 函数）
     mergeOption(base, extra) {
       const result = Object.assign({}, base)
+      if (!extra || typeof extra !== 'object') return result
       Object.keys(extra).forEach(key => {
         const value = extra[key]
         const isPlainObject = obj => obj && typeof obj === 'object' && !Array.isArray(obj)

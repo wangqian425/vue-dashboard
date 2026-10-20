@@ -4,7 +4,7 @@
       v-for="item in normalizedItems"
       :key="item.value"
       class="category-tabs__item"
-      :class="{ 'is-active': isActive(item) }"
+      :class="{ 'is-active': isActive(item) && !isMuted(item), 'is-muted': isMuted(item) }"
       :style="activeStyle(item)"
       @click="handleClick(item)"
     >
@@ -65,6 +65,12 @@ export default {
       if (!this.multiple) return item.value === this.value
       return item.value === this.allValue ? this.isAllSelected : this.selectedList.includes(item.value)
     },
+    // 置灰规则（多选模式）："全部"未全选时置灰；已全选时其余行业置灰
+    // 置灰项仍可点击：点置灰"全部"→重新全选；点置灰行业→取消该项（"全部"随之置灰）
+    isMuted(item) {
+      if (!this.multiple) return false
+      return item.value === this.allValue ? !this.isAllSelected : this.isAllSelected
+    },
     handleClick(item) {
       if (!this.multiple) {
         if (item.value === this.value) return
@@ -88,7 +94,7 @@ export default {
       this.$emit('change', next, item.raw)
     },
     activeStyle(item) {
-      if (!this.isActive(item)) return {}
+      if (!this.isActive(item) || this.isMuted(item)) return {}
       return {
         background: this.activeColor,
         borderColor: this.activeColor,
@@ -123,6 +129,18 @@ export default {
 
     &.is-active:hover {
       color: #fff;
+    }
+
+    /* 置灰态：全部未全选时的"全部"，或已全选时的各行业 */
+    &.is-muted {
+      color: #c0c4cc;
+      background: #f5f7fa;
+      border-color: #ebeef5;
+
+      &:hover {
+        color: #909399;
+        border-color: #dcdfe6;
+      }
     }
   }
 

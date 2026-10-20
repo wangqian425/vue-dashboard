@@ -64,10 +64,7 @@ export default {
     }
   },
   methods: {
-    // 图片图标（png/svg 等资源 URL）与 el-icon 字体图标区分渲染
-    isImageIcon(icon) {
-      return !/^el-icon/.test(icon)
-    }
+    //
   }
 }
 </script>
