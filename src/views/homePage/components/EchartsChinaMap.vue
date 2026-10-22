@@ -62,14 +62,55 @@
     <div v-if="loading" class="echarts-china-map__loading">
       地图加载中...
     </div>
+
+    <!-- 悬浮省份/市区跟随图标（原型：鼠标位置显示 province 图标，底尖对准鼠标） -->
+    <img
+      v-if="hoverIcon"
+      class="echarts-china-map__hover-icon"
+      :src="hoverIcon"
+      :style="{ left: hoverIconPos.x + 'px', top: hoverIconPos.y + 'px' }"
+      alt=""
+    >
+
+    <!-- 点位点击详情卡片（原型：白色卡片 + 行业主题色 tag/边框 + 更多>>；发电/非标两类字段不同） -->
+    <div
+      v-if="activePoint"
+      class="echarts-china-map__point-card"
+      :style="{ left: activePoint.x + 'px', top: activePoint.y + 'px', borderColor: pointCardColor }"
+    >
+      <div class="echarts-china-map__point-card-tag" :style="{ background: pointCardColor }">{{ activePoint.raw.industry }}</div>
+      <div class="echarts-china-map__point-card-head">
+        <img class="echarts-china-map__point-card-pin" :src="subsidyIcons[activePoint.raw.categoryName] || capitalIcon" alt="">
+        <span class="echarts-china-map__point-card-title">{{ pointCardTitle }}</span>
+        <span class="echarts-china-map__point-card-more" :style="{ color: pointCardColor }" @click="$emit('point-more', activePoint.raw)">更多&gt;&gt;</span>
+      </div>
+      <div v-if="pointDetailLoading" class="echarts-china-map__point-card-row is-loading">详情加载中...</div>
+      <template v-else>
+        <div
+          v-for="row in pointCardRows"
+          :key="row.label"
+          class="echarts-china-map__point-card-row"
+        >
+          <span class="echarts-china-map__point-card-label">{{ row.label }}：</span>
+          <span :style="{ color: pointCardColor }">{{ row.value }}</span>
+          <span v-if="row.sub" :style="{ color: pointCardColor }">{{ row.sub }}</span>
+        </div>
+        <!-- 详情>>：仅发电项目展示（原型交互17：点击跳转运营填报列表页） -->
+        <div v-if="!pointCardIsNonStandard" class="echarts-china-map__point-card-footer">
+          <span class="echarts-china-map__point-card-detail" :style="{ color: pointCardColor }" @click="$emit('point-detail', activePoint.raw)">详情&gt;&gt;</span>
+        </div>
+      </template>
+    </div>
   </div>
 </template>
 
 <script>
 import echarts from 'echarts'
 import chinaJson from '@/assets/maps/china.json'
-import * as provinceMapLoaders from '../map'
+import * as provinceMapLoaders from '@/assets/maps'
 import resize from '@/components/Charts/mixins/resize'
+import { REGION_PRICE_COMPARE, POINT_CATEGORIES, PROJECT_DETAIL_TEXT } from '../overview/config'
+import priceIcon from '../price.png'
 
 // 注册中国地图（模块级只注册一次）
 echarts.registerMap('china', chinaJson)
@@ -120,8 +161,6 @@ export default {
     capitalIcon: { type: String, default: '' },
     // 省会图标尺寸
     capitalSize: { type: Number, default: 16 },
-    // 省份悬浮浮层展示字段（交互8）：[{ label, field, unit }]
-    regionTooltipFields: { type: Array, default: () => [] },
     // 省份悬浮浮层数据：{ 省名: { field: value } }，移入省份区域弹出对应数据
     regionTooltipData: {
       type: Object,
@@ -129,6 +168,12 @@ export default {
     },
     // 当前地图区域：'' = 全国地图；省份行政 code = 下钻到该省区县地图
     mapCode: { type: String, default: '' },
+    // 点位悬浮 mini 胶囊（原型：⚡电价 + 项目编号）：{ valueField, codeField }
+    pointTip: { type: Object, default: () => ({}) },
+    // 点位详情接口数据（/largeScreen/projectDetail 返回 data）：projectType 决定卡片展示字段
+    pointDetail: { type: Object, default: null },
+    // 点位详情接口加载中
+    pointDetailLoading: { type: Boolean, default: false },
     // 全屏按钮图标 { 1: 全屏, 2: 退出 }
     fullscreenIcons: { type: Object, default: () => ({}) }
   },
@@ -138,7 +183,67 @@ export default {
       loading: false,
       isFullscreen: false,
       // 已加载过的省份地图缓存 { code: true }
-      mapCache: {}
+      mapCache: {},
+      // 点击点位弹出的详情卡片 { x, y, raw }，点击地图空白处关闭
+      activePoint: null,
+      // 悬浮省份/市区时的鼠标跟随图标（province.svg），移出区域隐藏
+      hoverIcon: '',
+      hoverIconPos: { x: 0, y: 0 }
+    }
+  },
+  computed: {
+    // 卡片主题色：按左下角补贴属性分类取色（原型：无补贴-蓝、有补贴-橙、合规清单-绿）
+    // tag 文字仍为项目一级类型（行业），颜色随补贴分类
+    pointCardColor() {
+      const raw = (this.activePoint && this.activePoint.raw) || {}
+      const hit = POINT_CATEGORIES.find(c => c.id === raw.category || c.name === raw.categoryName)
+      return (hit && hit.color) || '#0088ff'
+    },
+    // 是否非标项目（接口未返回时默认按发电项目展示点位原始字段）
+    pointCardIsNonStandard() {
+      const detail = this.pointDetail
+      return !!(detail && detail.projectType === 'NON_STANDARD')
+    },
+    pointCardTitle() {
+      const detail = this.pointDetail || {}
+      const nonStandard = detail.nonStandardDetail || {}
+      const power = detail.powerGenerationDetail || {}
+      const raw = (this.activePoint && this.activePoint.raw) || {}
+      return nonStandard.projectName || power.projectName || raw.projectName || ''
+    },
+    // 卡片行（原型交互13：发电项目与非标项目展示内容不一致）
+    // 发电项目：实控人/装机容量/发电利用小时数(达标率)/结算电价/补贴电价
+    // 非标项目：实控人/接入方式/生产及预警/项目规模/是否平台转发
+    // 接口未返回时回退点位原始数据；字段值缺失（随项目状态差异）渲染为 --
+    pointCardRows() {
+      const raw = (this.activePoint && this.activePoint.raw) || {}
+      const detail = this.pointDetail || {}
+      const fmt = v => (v === undefined || v === null || v === '' ? '--' : v)
+      const enumText = (map, code) => (map[code] !== undefined ? map[code] : fmt(code))
+      if (this.pointCardIsNonStandard) {
+        const n = detail.nonStandardDetail || {}
+        const hasTransfer = n.platformTransfer !== undefined && n.platformTransfer !== null && n.platformTransfer !== ''
+        return [
+          { label: '实控人', value: fmt(n.actualController || raw.controller) },
+          { label: '接入方式', value: enumText(PROJECT_DETAIL_TEXT.accessMethod, n.accessMethod) },
+          { label: '生产及预警', value: enumText(PROJECT_DETAIL_TEXT.productionTypes, n.productionTypes) },
+          { label: '项目规模', value: fmt(n.productionCapacity) },
+          { label: '是否平台转发', value: hasTransfer ? enumText(PROJECT_DETAIL_TEXT.platformTransfer, n.platformTransfer) : PROJECT_DETAIL_TEXT.platformTransfer.none }
+        ]
+      }
+      const p = detail.powerGenerationDetail || {}
+      const capacity = p.capacity !== undefined ? p.capacity : (p.installCapacity !== undefined ? p.installCapacity : raw.capacity)
+      const hours = p.hours !== undefined ? p.hours : (p.powerGenerationHours !== undefined ? p.powerGenerationHours : raw.hours)
+      const rate = p.rate !== undefined ? p.rate : raw.rate
+      const settle = p.editWindPrice || p.settlementPrice || raw.settlementPrice
+      const sube = p.subePrice || p.subsidyPrice || raw.subsidyPrice
+      return [
+        { label: '实控人', value: fmt(p.actualController || raw.controller) },
+        { label: '装机容量', value: `${fmt(capacity)}kW` },
+        { label: '发电利用小时数', value: `${fmt(hours)}h`, sub: rate !== undefined && rate !== null && rate !== '' ? `（达标率：${rate}%）` : '' },
+        { label: '结算电价', value: `${fmt(settle)}元/kWh` },
+        { label: '补贴电价', value: `${fmt(sube)}元/kWh` }
+      ]
     }
   },
   watch: {
@@ -181,10 +286,58 @@ export default {
     }
   },
   methods: {
+    // 底座跟随主图：把主图当前的 zoom/center 原样写入底座的模型与坐标系。
+    // 不用「转发相对增量」：两层 viewRect 有 layoutCenter 偏移，相同的 dx/dy/zoom 增量
+    // 在各自投影下算出的 center 有微小差异，会随缩放累积放大导致底座漂移。
+    // 直接对齐绝对值可保证任意层级下两层严格重合，屏幕间距恒等于 layoutCenter 偏移。
+    // 全程只读模型/坐标系，不走 getOption + setOption（避免深拷贝与全量更新造成的卡顿）。
+    syncShadowGeo() {
+      if (!this.chart || this.chart.isDisposed()) return
+      const ecModel = this.chart.getModel()
+      // echarts 4 的 getComponent({mainType, id}) 查不到 geo 组件，需遍历按 id 匹配
+      let main = null
+      let shadow = null
+      ecModel.eachComponent({ mainType: 'geo' }, component => {
+        if (component.id === 'mapMain') main = component
+        if (component.id === 'mapShadow') shadow = component
+      })
+      if (!main || !shadow || !main.coordinateSystem || !shadow.coordinateSystem) return
+      const zoom = main.coordinateSystem.getZoom()
+      const center = main.coordinateSystem.getCenter()
+      shadow.coordinateSystem.setZoom(zoom)
+      shadow.coordinateSystem.setCenter(center)
+      shadow.setZoom(zoom)
+      shadow.setCenter(center)
+      // 空变换（dx/dy = 0）：仅触发 updateTransform 重绘，不改变任何值
+      this.chart.dispatchAction({ type: 'geoRoam', componentType: 'geo', geoId: 'mapShadow', dx: 0, dy: 0 })
+    },
     initChart() {
       this.chart = echarts.init(this.$refs.chart)
       this.renderOption()
       this.chart.on('click', this.handleClick)
+      // 主图缩放/平移时同步灰色底座：微任务中执行，与主图在同一帧重绘，视觉上完全同步
+      this.chart.on('georoam', params => {
+        // 只处理主图触发的事件，避免同步动作自身触发的事件再次进入造成递归
+        if (!params || params.geoId !== 'mapMain') return
+        Promise.resolve().then(() => this.syncShadowGeo())
+      })
+      // 悬浮省份/市区时在鼠标处显示 province 图标（原型效果）；指向点位或移出地图时隐藏
+      // 注意：区域命中的事件归属是绑定了 geoIndex 的 map series（componentType='series'、
+      // componentSubType='map'），并非 'geo'，因此两种来源都要覆盖
+      this.chart.on('mousemove', params => {
+        const isRegion = params.componentType === 'geo' || params.componentSubType === 'map'
+        if (isRegion && this.capitalIcon) {
+          const ev = params.event || {}
+          // 图标底尖对准鼠标位置
+          this.hoverIconPos = { x: (ev.offsetX || 0) - 16, y: (ev.offsetY || 0) - 32 }
+          this.hoverIcon = this.capitalIcon
+        } else if (this.hoverIcon) {
+          this.hoverIcon = ''
+        }
+      })
+      this.chart.on('globalout', () => {
+        this.hoverIcon = ''
+      })
       this.bindFullscreen()
     },
     // 加载并注册省市区县边界 GeoJSON（本地文件，webpack 动态 import 按需加载异步 chunk），成功后重绘
@@ -201,7 +354,7 @@ export default {
       }
       this.loading = true
       try {
-        // 本地 GeoJSON 位于 views/homePage/map/{code}_full.json（scripts/download-map-data.js 下载）
+        // 本地 GeoJSON 位于 src/assets/maps/{code}.json（scripts/download-map-data.js 下载，文件名去掉 _full）
         // 走静态映射表（map/index.js）：
         //   开发环境 babel-plugin-dynamic-import-node 会把「带变量的 import()」降级为 require 表达式，
         //   webpack 无法静态收集上级目录模块，运行时报 Cannot find module，因此这里不能用 import(`../map/${code}_full.json`)
@@ -209,7 +362,7 @@ export default {
         // 兼容不同编译环境的模块互操作（default 导出可能被 interop 包一层）
         const loaders = provinceMapLoaders.default || provinceMapLoaders
         const loader = loaders[code]
-        if (!loader) throw new Error(`缺少省份地图文件: ${code}_full.json`)
+        if (!loader) throw new Error(`缺少省份地图文件: ${code}.json（请先运行 node scripts/download-map-data.js）`)
         const geoJsonModule = await loader()
         const geoJson = (geoJsonModule && geoJsonModule.default) || geoJsonModule
         echarts.registerMap(code, geoJson)
@@ -222,8 +375,11 @@ export default {
         this.loading = false
       }
     },
-    // 按分类分组为多个 scatter series，每个分类一种颜色（颜色圆点）
-    // 点位若带补贴属性图标（subsidyIcons），用对应 station 图片作为 symbol
+    // 按分类分组为多个 scatter series，每个分类一种颜色
+    // 点位若带补贴属性图标（subsidyIcons = station-1/2/3，蓝=无补贴 / 橙=有补贴 / 绿=合规清单），
+    // 用对应 station 图片作为 symbol（图片自带配色，与右下角图例共用同一套图标）
+    // symbolSize 必须用数字：数组尺寸会让 zrender 走 scale 缩放渲染（style.width=2 + scale），
+    // zrender 4 的 Image.contain 不做 transform 逆变换，该形态下鼠标命中/悬浮全部失效
     buildSeries() {
       const groups = {}
       this.points.forEach(p => {
@@ -235,15 +391,17 @@ export default {
         const icon = this.subsidyIcons[p.subsidy]
         arr.push(Object.assign(
           { name: p[this.fieldMap.name] || '--', value: [lng, lat], raw: p },
-          icon ? { symbol: `image://${icon}`, symbolSize: 22 } : {}
+          icon ? { symbol: `image://${icon}`, symbolSize: 28 } : {}
         ))
       })
 
       const known = new Set(this.categories.map(c => c.id))
+      // 分类色用于未配置图标时的圆点兜底（带图标的点位颜色由 station 图片自带）
       const series = this.categories.map(c => ({
         name: c.name,
         type: 'scatter',
         coordinateSystem: 'geo',
+        geoIndex: 1, // 指向主 geo（geo[0] 是灰色底座）
         symbolSize: 10,
         itemStyle: { color: c.color },
         emphasis: {
@@ -264,6 +422,7 @@ export default {
           name: '其他',
           type: 'scatter',
           coordinateSystem: 'geo',
+          geoIndex: 1,
           symbolSize: 10,
           itemStyle: { color: this.defaultColor },
           data: others
@@ -272,22 +431,22 @@ export default {
 
       // 省会标记（仅全国视图：下钻到省后显示的是地市，不再标省会）
       if (this.capitalIcon && this.capitals.length && !this.mapCode) {
-        series.push({
-          name: '省会',
-          type: 'scatter',
-          coordinateSystem: 'geo',
-          symbol: `image://${this.capitalIcon}`,
-          symbolSize: this.capitalSize,
-          // 不响应鼠标：避免遮挡省份悬浮高亮与点击下钻
-          silent: true,
-          // 底图与点位的绘制层级
-          z: 6,
-          data: this.capitals.map(c => ({
-            name: c.name,
-            value: [c.lng, c.lat],
-            city: c.city
-          }))
-        })
+        // series.push({
+        //   name: '省会',
+        //   type: 'scatter',
+        //   coordinateSystem: 'geo',
+        //   symbol: `image://${this.capitalIcon}`,
+        //   symbolSize: this.capitalSize,
+        //   // 不响应鼠标：避免遮挡省份悬浮高亮与点击下钻
+        //   silent: true,
+        //   // 底图与点位的绘制层级
+        //   z: 6,
+        //   data: this.capitals.map(c => ({
+        //     name: c.name,
+        //     value: [c.lng, c.lat],
+        //     city: c.city
+        //   }))
+        // })
       }
       return series
     },
@@ -297,8 +456,8 @@ export default {
         name: '省份电价',
         type: 'map',
         map: mapName,
-        // 与索引 0 的 geo 组件共享坐标系（roam 由 geo 驱动，底图与散点随之同步）
-        geoIndex: 0,
+        // 与索引 1 的主 geo 组件共享坐标系（geo[0] 是灰色底座；roam 由 geo 驱动，底图与散点随之同步）
+        geoIndex: 1,
         // 显示省份名称（点击省份可下钻）
         label: {
           show: true,
@@ -309,9 +468,12 @@ export default {
           // 有电价数据时颜色由 visualMap 接管；下钻到省后无省级着色、全国未选电价时也用灰白底
           // 仅「全国视图 + 未选电价」保持纯白无热力（交互7）
           areaColor: hasColor || this.mapCode ? '#f0f2f5' : '#ffffff',
-          // 全国与各省边框：灰色轮廓（整体加粗，最显眼的全国外轮廓随之加大）
-          borderColor: '#9aa7b5',
-          borderWidth: 3
+          // 白色边框 + 浅灰投影（原型：区域间白色细界线，整体立体感）
+          borderColor: '#ffffff',
+          borderWidth: 1.5,
+          shadowColor: 'rgba(140, 150, 165, 0.35)',
+          shadowBlur: 10,
+          shadowOffsetY: 5
         },
         emphasis: {
           itemStyle: {
@@ -342,56 +504,128 @@ export default {
         tooltip: {
           trigger: 'item',
           confine: true,
+          // 浮层常驻鼠标正上方：水平居中于鼠标，底部留出 province 跟随图标的高度；
+          // 上方空间不足时落到鼠标下方，左右再按容器宽度收敛，避免溢出
+          position: (point, params, dom, rect, size) => {
+            const gap = 38
+            const contentWidth = size.contentSize[0]
+            const contentHeight = size.contentSize[1]
+            const viewWidth = size.viewSize[0]
+            let x = point[0] - contentWidth / 2
+            let y = point[1] - contentHeight - gap
+            if (y < 4) y = point[1] + gap
+            x = Math.max(4, Math.min(x, viewWidth - contentWidth - 4))
+            return [x, y]
+          },
           // 深色胶囊样式由 formatter 内联实现（原型效果），外层容器置透明
           backgroundColor: 'transparent',
           borderWidth: 0,
           padding: 0,
           extraCssText: 'box-shadow: none;',
           formatter: params => {
-            if (params.seriesType === 'scatter') {
-              const raw = params.data.raw || {}
-              const rows = this.hoverFields
-                .map(f => {
-                  const v = raw[f.field]
-                  const empty = v === undefined || v === null || v === ''
-                  return `${f.label}：${empty ? '--' : v}${empty ? '' : (f.unit || '')}`
+            // 区域悬浮（交互8）：电价 + 与 spot 均价的差值
+            // 差值 > 0 → 绿色 + 向下箭头；< 0 → 红色 + 向上箭头
+            // 全国含标杆结算电价三行；下钻到省（市区粒度）仅光伏/发电两行（无市区级标杆数据）
+            // 左下角电价菜单选中某一项 → 只展示该项对应的电价；未选中（''）→ 展示全部
+            if (params.seriesType === 'map' || params.componentType === 'geo') {
+              const data = this.regionTooltipData[params.name]
+              const selected = this.priceOptions.find(o => o.id === this.priceType)
+              const base = REGION_PRICE_COMPARE.filter(item => !this.mapCode || !item.nationalOnly)
+              const list = selected ? base.filter(item => item.field === selected.field) : base
+              // 选中项在当前层级不可展示（如标杆电价下钻到省）时回退为全部，避免出现空浮层
+              const rows = (list.length ? list : base)
+                .map(item => {
+                  const v = data ? data[item.field] : undefined
+                  const hasV = v !== undefined && v !== null && v !== ''
+                  // 每行前置价格图标（原型：icon + 电价）
+                  const icon = `<img src="${priceIcon}" style="width:14px;height:14px;vertical-align:-3px;margin-right:4px;">`
+                  const priceHtml = `${icon}<b>${hasV ? v : '--'}</b>`
+                  // noDiff：标杆电价本身取自 spot，无独立 spot 均价可比，只展示数值不展示差值
+                  if (item.noDiff) return priceHtml
+                  const spot = data ? data[item.spotField] : undefined
+                  const hasSpot = spot !== undefined && spot !== null && spot !== ''
+                  const vn = Number(v)
+                  const sn = Number(spot)
+                  let diffHtml = '<span style="color:#909399;">--</span>'
+                  if (hasV && hasSpot && !isNaN(vn) && !isNaN(sn)) {
+                    const diff = Math.round((vn - sn) * 100) / 100
+                    if (diff > 0) {
+                      diffHtml = `<span style="color:#2fc25b;">${diff.toFixed(2)}↓</span>`
+                    } else if (diff < 0) {
+                      diffHtml = `<span style="color:#f56c6c;">${diff.toFixed(2)}↑</span>`
+                    } else {
+                      diffHtml = '<span style="color:#909399;">0.00</span>'
+                    }
+                  }
+                  return `${priceHtml}（${diffHtml}）`
                 })
                 .join('<br/>')
-              return this.wrapTooltip(`<b>${params.data.name}</b><br/>${rows}`)
-            }
-            // 省份区域悬浮（交互8）：弹出当前选中电价类型的省份数据，无值显示 --
-            if (params.seriesType === 'map' && this.regionTooltipFields.length) {
-              const data = this.regionTooltipData[params.name]
-              if (data) {
-                const rows = this.regionTooltipFields
-                  .map(f => {
-                    const v = data[f.field]
-                    const empty = v === undefined || v === null || v === ''
-                    const text = empty ? '--' : v
-                    // 电价数值加粗突出（原型：icon + 电价 + 附加指标）
-                    const valueHtml = empty ? '<b>--</b>' : `<b>${text}</b>${f.unit || ''}`
-                    return `${f.label}：${valueHtml}`
-                  })
-                  .join('<br/>')
-                return this.wrapTooltip(`<b>${params.name}</b><br/>${rows}`)
-              }
-              return this.wrapTooltip(`<b>${params.name}</b>`)
+              return this.wrapTooltip(`${rows}`)
             }
             return ''
           }
         },
-        // geo 只作为坐标系（散点定位 + 缩放平移），不绘制、不提示，避免与底图系列重叠
-        geo: {
-          // 全国地图 / 下钻后的省市区县地图（mapCode 为空时回全国）
-          map: mapName,
-          roam: true,
-          zoom: 0.8,
-          scaleLimit: { min: 0.4, max: 2 },
-          label: { show: false },
-          itemStyle: { areaColor: 'transparent', borderColor: 'transparent' },
-          emphasis: { disabled: true },
-          tooltip: { show: false }
-        },
+        // geo 承担区域绘制：map series 与 geo 共享坐标系（geoIndex）时不绘制图形（MapView.render 直接 return），
+        // 仅承载数据供 visualMap 着色（着色通过 series 数据写入 geo regions）；因此底图/悬浮/标签样式都配在 geo 上
+        // geo[0] = 灰色底座（伪 3D 立体轮廓，数组靠前先绘制、垫在底层）；geo[1] = 主地图，系列与交互均指向 geo[1]
+        geo: [
+          {
+            // 灰色底座轮廓：与主图同形同尺寸，屏幕位置整体右移/下移，形成倾斜立体底座
+            id: 'mapShadow',
+            map: mapName,
+            layoutCenter: ['50%', '49%'],
+            layoutSize: '103%',
+            // 初始缩放与主图一致；此后由 georoam 事件转发同一相对变换保持对齐
+            zoom: 0.8,
+            // 与主图相同的缩放上下限，避免到达极值被单向截断导致两层错开
+            scaleLimit: { min: 0.4, max: 2 },
+            // roam 关闭：底座的 roam 控制器始终会因「指针压在主图区域上」
+            // 被 onIrrelevantElement 判定为不相关而永不触发，跟随必须由主图事件转发完成
+            roam: false,
+            silent: true,
+            label: { show: false },
+            itemStyle: {
+              areaColor: '#ccd4dc',
+              borderColor: '#b9c3cd',
+              borderWidth: 0.5
+            }
+          },
+          {
+            // roam 事件与转发均以 id 标识主图
+            id: 'mapMain',
+            // 全国地图 / 下钻后的省市区县地图（mapCode 为空时回全国）
+            map: mapName,
+            // 与底座同布局尺寸（仅 layoutCenter 偏移），保证缩放平移后两图严格对齐
+            layoutCenter: ['50%', '48%'],
+            layoutSize: '104%',
+            roam: true,
+            zoom: 0.8,
+            scaleLimit: { min: 0.4, max: 2 },
+            // 显示省名 / 区县名
+            label: { show: true, color: '#303133', fontSize: 12 },
+            itemStyle: {
+              // 有电价着色或已下钻到省 → 灰白底；全国未选电价 → 纯白无热力（交互7）
+              // 区域绘制实际取 geo 样式，此处与 buildMapSeries 保持一致
+              areaColor: hasColor || this.mapCode ? '#f0f2f5' : '#ffffff',
+              // 白色边框 + 浅灰投影（原型效果：白色省界/区县界，整体带灰色立体投影）
+              borderColor: '#ffffff',
+              borderWidth: 1.5,
+              shadowColor: 'rgba(140, 150, 165, 0.35)',
+              shadowBlur: 10,
+              shadowOffsetY: 5
+            },
+            emphasis: {
+              itemStyle: {
+                // 悬浮：区域填充透明绿、边框变绿并加粗
+                areaColor: 'rgba(0, 200, 0, 0.18)',
+                borderColor: '#00c800',
+                borderWidth: 2.5
+              },
+              // 悬浮时名称保持显示（透明绿底上深色文字）
+              label: { show: true, color: '#1a5c1a', fontWeight: 600 }
+            }
+          }
+        ],
         // 左下角颜色图例：改用 echarts visualMap（连续型），与地图着色同源
         visualMap: hasColor
           ? {
@@ -425,11 +659,30 @@ export default {
     wrapTooltip(html) {
       return `<div style="background: rgba(23, 35, 54, 0.9); color: #fff; padding: 6px 10px; border-radius: 6px; font-size: 12px; line-height: 1.7; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3); white-space: nowrap;">${html}</div>`
     },
+    // 点位悬浮 mini 胶囊（原型：黑色圆角胶囊，⚡ + 电价 + 编号）
+    wrapMini(html) {
+      return `<div style="display:inline-flex;align-items:center;background: rgba(15, 25, 40, 0.92); color: #fff; padding: 4px 10px; border-radius: 14px; font-size: 12px; line-height: 1.5; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3); white-space: nowrap;">${html}</div>`
+    },
     handleClick(params) {
       if (params.seriesType === 'scatter') {
         const raw = params.data && params.data.raw
-        if (raw) this.$emit('point-click', raw)
-      } else if (params.seriesType === 'map' && params.name) {
+        if (raw) {
+          // 详情卡片出现在点位右上方，并收敛在容器边界内
+          const ev = params.event || {}
+          const cardWidth = 300
+          const wrap = this.$refs.wrap
+          const maxLeft = wrap ? Math.max(wrap.clientWidth - cardWidth - 8, 8) : 600
+          const x = Math.min(Math.max((ev.offsetX || 0) + 16, 8), maxLeft)
+          const y = Math.max((ev.offsetY || 0) - 150, 8)
+          this.activePoint = { x, y, raw }
+          this.$emit('point-click', raw)
+        }
+        return
+      }
+      // 点击地图空白处 / 区域时关闭点位卡片
+      this.activePoint = null
+      // 区域由 geo 绘制，点击省份/区县命中的是 geo（map series 共享 geoIndex 时不绘制图形）
+      if ((params.componentType === 'geo' || params.seriesType === 'map') && params.name) {
         // 点击省份区域 → 下钻
         this.$emit('region-click', { province: params.name })
       }
@@ -723,6 +976,93 @@ export default {
     background: #f5f7fa;
     color: #909399;
     font-size: 13px;
+  }
+
+  /* 悬浮省份/市区的鼠标跟随图标：不拦截任何鼠标事件 */
+  &__hover-icon {
+    position: absolute;
+    width: 30px;
+    height: auto;
+    pointer-events: none;
+    z-index: 5;
+  }
+
+  /* 点位点击详情卡片（原型：白色卡片、橙色主题边框） */
+  &__point-card {
+    position: absolute;
+    width: 300px;
+    padding: 10px 12px;
+    background: #fff;
+    border: 2px solid #f5a623;
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+    font-size: 12px;
+    color: #303133;
+    z-index: 20;
+  }
+
+  &__point-card-tag {
+    display: inline-block;
+    padding: 1px 8px;
+    margin-bottom: 6px;
+    background: #f5a623;
+    color: #fff;
+    border-radius: 3px;
+    font-size: 11px;
+  }
+
+  &__point-card-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+  }
+
+  &__point-card-pin {
+    width: 14px;
+    height: 18px;
+    object-fit: contain;
+    flex-shrink: 0;
+  }
+
+  &__point-card-title {
+    flex: 1;
+    font-weight: 600;
+  }
+
+  &__point-card-more {
+    flex-shrink: 0;
+    color: #f5a623;
+    cursor: pointer;
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+
+  &__point-card-row {
+    line-height: 1.9;
+
+    &.is-loading {
+      color: #909399;
+    }
+  }
+
+  &__point-card-footer {
+    margin-top: 2px;
+    text-align: right;
+  }
+
+  &__point-card-detail {
+    cursor: pointer;
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+
+  &__point-card-label {
+    color: #909399;
   }
 }
 </style>

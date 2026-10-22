@@ -89,3 +89,19 @@ export function queryOperateDetail(data) {
 export function getProjectList(params) {
   return request('/regulatory_s/project/home/projectList', params)
 }
+
+// 地图点位详情：POST /largeScreen/projectDetail
+// 入参 { industry, month, projectCode, status }
+//   - industry: 行业类型：能源电力/节能环保/智慧能源/绿色交通/其他，空=全部
+//   - month: 查询月份 yyyy-MM
+//   - projectCode: 项目编号
+//   - status: 项目状态 1在建; 2运营; 3在建和运营; 6未选择
+// 返回 data:
+//   - projectType: POWER-发电项目, NON_STANDARD-非标项目（两类项目展示字段不同）
+//   - powerGenerationDetail（POWER）: { projectName, projectCode, actualController, capacity 装机容量,
+//       hours 发电利用小时数, editWindPrice 结算电价, subePrice 补贴电价 }
+//   - nonStandardDetail（NON_STANDARD）: { projectName, projectCode, actualController, accessMethod 接入方式,
+//       productionTypes 生产及预警, productionCapacity 项目规模, platformTransfer 是否平台转发 }
+export function queryProjectDetail(data) {
+  return postRequest('/largeScreen/projectDetail', data)
+}

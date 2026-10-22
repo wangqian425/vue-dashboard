@@ -4,7 +4,7 @@
  * 数据来源：DataV.GeoAtlas 公开边界服务（阿里云）
  *   https://geo.datav.aliyun.com/areas_v3/bound/{code}_full.json
  *
- * 输出目录：src/views/homePage/map/{code}_full.json
+ * 输出目录：src/assets/maps/{code}.json（与 china.json 同目录，文件名去掉 _full）
  * 用法：node scripts/download-map-data.js
  * 幂等：文件已存在且非空时跳过，可重复执行做增量补齐。
  */
@@ -47,11 +47,11 @@ const PROVINCES = [
   { code: '650000', name: '新疆' }
 ]
 
-const OUT_DIR = path.resolve(__dirname, '../src/views/homePage/map')
+const OUT_DIR = path.resolve(__dirname, '../src/assets/maps')
 
 function download(code, name) {
   return new Promise((resolve, reject) => {
-    const file = path.join(OUT_DIR, `${code}_full.json`)
+    const file = path.join(OUT_DIR, `${code}.json`)
     // 已存在且非空则跳过
     if (fs.existsSync(file) && fs.statSync(file).size > 0) {
       console.log(`跳过（已存在）: ${name} ${code}`)
@@ -88,12 +88,12 @@ function download(code, name) {
 //   改成静态路径映射后，两种环境都能正确解析（生产构建生成独立的异步 chunk，按需加载）。
 function generateIndex() {
   // 注释单独一行：避免行尾注释把 join 补的逗号一起注释掉
-  const entries = PROVINCES.map(p => `  // ${p.name}\n  '${p.code}': () => import('./${p.code}_full.json')`)
+  const entries = PROVINCES.map(p => `  // ${p.name}\n  '${p.code}': () => import('./${p.code}.json')`)
   const content = `/**
  * 省级 GeoJSON 按需加载映射表
  *
  * 由 scripts/download-map-data.js 自动生成，请勿手动修改；新增/更新省份后重跑该脚本即可。
- * 组件用法：import provinceMapLoaders from '../map'；const geoJson = await provinceMapLoaders[code]()
+ * 组件用法：import provinceMapLoaders from '@/assets/maps'；const geoJson = await provinceMapLoaders[code]()
  */
 export default {
 ${entries.join(',\n')}

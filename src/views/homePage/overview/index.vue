@@ -8,7 +8,6 @@
           :categories="pointCategories"
           :field-map="POINT_FIELD_MAP"
           :hover-fields="HOVER_FIELDS"
-          :region-tooltip-fields="regionPriceFields"
           :region-tooltip-data="provincePriceMap"
           :capitals="capitals"
           :capital-icon="capitalIcon"
@@ -19,6 +18,9 @@
           :subsidy-options="subsidyOptions"
           :subsidy-filter.sync="subsidyFilter"
           :subsidy-icons="subsidyIcons"
+          :point-tip="pointTip"
+          :point-detail="pointDetail"
+          :point-detail-loading="pointDetailLoading"
           :price-options="priceOptions"
           :price-type.sync="priceType"
           :province-data="provincePrices"
@@ -28,6 +30,7 @@
           @back="handleMapBack"
           @point-click="handlePointClick"
           @point-more="handlePointMore"
+          @point-detail="handlePointDetail"
         />
       </div>
 
@@ -146,7 +149,7 @@ import {
   queryNationalRanking,
   queryRegionRanking,
   queryMapDisplay,
-  getProjectList
+  queryProjectDetail
 } from '@/api/homeOverview'
 
 import {
@@ -159,7 +162,6 @@ import {
   POINT_CATEGORIES,
   classifyProject,
   HOVER_FIELDS,
-  REGION_PRICE_FIELDS,
   PROJECT_CARD_FIELDS,
   PROJECT_FIELD_MAP,
   STATUS_TAG_TYPE,
@@ -183,7 +185,8 @@ import {
   findProvince,
   PROVINCE_CAPITALS,
   station_type,
-  fullscreenIcon
+  fullscreenIcon,
+  POINT_TIP
 } from './config'
 import provinceIcon from '../province.svg'
 
@@ -221,12 +224,17 @@ export default {
       // 地图浮动菜单配置
       buildOptions: BUILD_FILTERS,
       subsidyOptions: SUBSIDY_FILTERS,
-      priceOptions: PRICE_OPTIONS,
       subsidyIcons: station_type,
       fullscreenIcons: fullscreenIcon,
+      // 点位悬浮 mini 胶囊配置（原型交互）
+      pointTip: POINT_TIP,
+      // 点位详情接口数据与加载态（点击点位 → /largeScreen/projectDetail）
+      pointDetail: null,
+      pointDetailLoading: false,
 
       // 地图筛选状态（子组件 .sync 回写）
-      buildFilter: ['在建', '运营'],
+      // 状态筛选（在建/运营）默认不选中 = 展示全量数据（原型注5）
+      buildFilter: [],
       subsidyFilter: ['无补贴', '有补贴', '合规清单'],
       priceType: 'wind',
 
@@ -235,6 +243,9 @@ export default {
       levels: [Object.assign({}, ROOT_LEVEL)],
 
       overview: {},
+      // 行业 tabs 计数快照（来自 queryProjectOverview.industryNum）：
+      // 分类全部取消、页面数据清空时仍保留，保证筛选器可操作
+      categoryStats: [],
       rankList: [],
       // 建设/运营管理项目报表原始数据（逐月数组，经 manageTrend 计算属性映射为图表结构）
       manageList: [],
@@ -323,15 +334,16 @@ export default {
       return ENERGY_LABELS[this.manageEnergyType] || '风电'
     },
     manageTitle() {
-      return `建设/运营管理项目（${this.energyLabel}）`
+      return `建设/运营管理项目`
     },
     regionTitle() {
       const names = this.levels.map(l => l.name).slice(1)
       return names.length ? names.join(' / ') : '全国'
     },
     // 行业 tabs：由 industryNum 派生，行业名反查 id 供筛选回写
+    // 计数取独立快照 categoryStats：分类全部取消（数据清空）时 tabs 仍可展示与操作
     categoryTabs() {
-      const list = this.overview.industryNum || []
+      const list = this.categoryStats || []
       return list.map(item => {
         const cat = CATEGORIES.find(c => c.name === item.industry)
         return {
@@ -436,57 +448,64 @@ export default {
         (group.projectList || []).forEach(item => {
           const catId = classifyProject(item.natProject, item.compCatalog)
           const cat = POINT_CATEGORIES.find(c => c.id === catId) || POINT_CATEGORIES[0]
-          list.push({
+          list.push(Object.assign({}, item, {
             id: item.projectCode,
             name: item.projectName,
             lng: item.longitude,
             lat: item.latitude,
             category: cat.id,
-            categoryName: cat.name,
             // 补贴类型名与 station_type 图标 key 一致（无补贴/有补贴/合规清单）
+            categoryName: cat.name,
             subsidy: cat.name,
-            cityName: item.cityName,
-            projectCode: item.projectCode,
             // 接口未返回项目状态，兜底默认保证右上角筛选不误过滤
             status: item.status || '在建'
-          })
+          }))
         })
       })
       return list
     },
-    // 省份着色数据：按左下角选中的电价维度取各省汇总值
+    // 地图着色数据：按左下角选中的电价维度取聚合值
+    // 全国视图 → 各省汇总值；省份下钻 → 该省各市区值（按市区粒度着色，visualMap 随之展示）
     // 未选中（priceType 为空）→ 返回空数组，地图不着色（纯白，交互7）
     provincePrices() {
-      // 省份着色只在全国视图有意义：下钻到省后无省间对比，清空着色（地图纯白、图例隐藏）
-      if (this.query.level !== 'country') return []
       const option = PRICE_OPTIONS.find(o => o.id === this.priceType)
       if (!option) return []
-      return this.provinceGroups
-        .map(group => {
-          const first = (group.projectList || [])[0] || {}
-          return {
-            name: provinceShortName(first.provinceName || ''),
-            value: Number(group[option.field]) || 0
-          }
-        })
+      if (this.query.level === 'country') {
+        return this.provinceGroups
+          .map(group => {
+            const first = (group.projectList || [])[0] || {}
+            return {
+              name: provinceShortName(first.provinceName || ''),
+              value: Number(group[option.field]) || 0
+            }
+          })
+          .filter(d => d.name)
+      }
+      // 省份下钻：按市区粒度着色（mapDisplay 返回 cityPriceList，名称与地图区域一致）
+      const group = this.provinceGroups[0] || {}
+      return (group.cityPriceList || [])
+        .map(c => ({ name: c.name, value: Number(c[option.field]) || 0 }))
         .filter(d => d.name)
     },
     // 地图点位：按右上角状态筛选 + 右下角补贴属性筛选（均为多选）
+    // 状态筛选未勾选时展示全量（在建 + 运营），勾选后仅显示对应状态（原型注5）
     visiblePoints() {
       return this.points.filter(p =>
-        this.buildFilter.includes(p.status) && this.subsidyFilter.includes(p.categoryName)
+        (this.buildFilter.length === 0 || this.buildFilter.includes(p.status)) &&
+        this.subsidyFilter.includes(p.categoryName)
       )
     },
-    // 省份悬浮浮层展示字段（交互8）：与左下角选中的电价菜单一致，只显示该类型；未选时显示全部
-    // 末尾附该省项目数（对齐原型 tooltip 的附加指标）
-    regionPriceFields() {
-      const option = PRICE_OPTIONS.find(o => o.id === this.priceType)
-      const priceFields = option ? [{ label: option.label, field: option.field, unit: '元/kWh' }] : REGION_PRICE_FIELDS
-      return priceFields.concat([{ label: '项目数', field: 'projectCount' }])
-    },
-    // 省份悬浮浮层数据（交互8）：省名 → 电价汇总 + 项目数
+    // 区域悬浮浮层数据（交互8）：区域名 → 电价汇总 + 项目数
+    // 全国视图按省聚合；省份下钻按市区粒度（cityPriceList）
     provincePriceMap() {
       const map = {}
+      if (this.query.level === 'province') {
+        const group = this.provinceGroups[0] || {}
+        ;(group.cityPriceList || []).forEach(c => {
+          map[c.name] = Object.assign({ projectCount: c.projectCount || 0 }, c)
+        })
+        return map
+      }
       this.provinceGroups.forEach(group => {
         const first = (group.projectList || [])[0] || {}
         const name = provinceShortName(first.provinceName || '')
@@ -497,6 +516,13 @@ export default {
     // 地图当前区域：省级下钻时传省份 code，驱动地图切换为该省区县地图
     mapCode() {
       return this.query.level === 'province' ? (this.query.provinceCode || '') : ''
+    },
+    // 电价菜单（左下角）：全国视图提供全部维度（含标杆电价）；
+    // 下钻到省后无市区级标杆数据，菜单去掉标杆电价
+    priceOptions() {
+      return this.query.level === 'country'
+        ? PRICE_OPTIONS
+        : PRICE_OPTIONS.filter(o => o.id !== 'benchmark')
     }
   },
   watch: {
@@ -506,12 +532,11 @@ export default {
         this.fetchAll()
       }
     },
-    // 地图状态筛选（在建/运营）联动项目总览报表 + 建设/运营管理项目报表
+    // 地图状态筛选（在建/运营）：与一级分类联动生效，切换后同步刷新界面整体数据（原型注5）
     buildFilter: {
       deep: true,
       handler() {
-        this.fetchOverview()
-        this.fetchManageTrend()
+        this.fetchAll()
       }
     },
     // 运营项目情况能源类型切换（风电/光伏/非标）：只重新请求运营项目情况，不影响其它报表
@@ -544,6 +569,10 @@ export default {
     async fetchOverview() {
       const data = await this.safeRequest(() => queryProjectOverview(this.reportParams), {})
       this.overview = data || {}
+      // 行业 tabs 计数独立保存：分类全部取消选中时页面数据清空，但筛选器需保留供重新选择
+      if (data && Array.isArray(data.industryNum) && data.industryNum.length) {
+        this.categoryStats = data.industryNum
+      }
     },
     // 建设/运营管理项目报表：POST queryBuildandOperate，入参 = 全局报表参数
     async fetchManageTrend() {
@@ -576,20 +605,25 @@ export default {
       const data = await this.safeRequest(() => queryOperateDetail(params), {})
       this.operateDetail = data || {}
     },
-    // 项目列表（下钻后卡片）：GET getProjectList，入参沿用地图/点位接口的旧参数
-    async fetchProjectList() {
-      const data = await this.safeRequest(() => getProjectList(this.requestParams), { list: [] })
-      this.projectList = (data && data.list) || []
-    },
+
     async fetchAll() {
+      // 行业分类全部取消选中（原型注4）：地图点位与各面板数据全部清空（空白效果），
+      // 仅保留行业 tabs 计数（categoryStats）供重新选择
+      if (Array.isArray(this.query.category) && this.query.category.length === 0) {
+        this.overview = {}
+        this.manageList = []
+        this.operateDetail = {}
+        this.rankList = []
+        this.provinceGroups = []
+        return
+      }
       // 前 5 个请求各自写回自己的 data，这里只做并发编排，不依赖返回值
       await Promise.all([
         this.fetchOverview(),
         this.fetchManageTrend(),
         this.fetchOperateDetail(),
         this.fetchRank(),
-        this.fetchMapDisplay(),
-        this.fetchProjectList()
+        this.fetchMapDisplay()
       ])
     },
     // 地图展示：POST queryMapDisplay，入参 = 全局报表参数
@@ -622,6 +656,8 @@ export default {
       this.query.provinceCode = code
       this.query.cityCode = ''
       this.levels = [Object.assign({}, ROOT_LEVEL), { code, name }]
+      // 下钻后电价菜单不含标杆电价：清空该选中态，避免菜单项消失后仍按标杆电价着色
+      if (this.priceType === 'benchmark') this.priceType = ''
     },
     // 地图点击：按省份名（地图短名）反查字典下钻
     handleRegionClick(payload) {
@@ -644,11 +680,27 @@ export default {
         this.query.category = [target.id]
       }
     },
-    handlePointClick(point) {
-      this.$message.info(`${point.name}（点击点位可跳转项目详情）`)
+    // 点位点击：详情卡片由地图组件弹出，此处请求项目详情接口并回传给卡片
+    // 入参 { industry, month, projectCode, status }（status 由点位自身状态映射：1在建 2运营）
+    async handlePointClick(point) {
+      this.pointDetail = null
+      this.pointDetailLoading = true
+      const detail = await this.safeRequest(() => queryProjectDetail({
+        industry: point.industry || '',
+        month: this.query.month,
+        projectCode: point.projectCode,
+        status: STATUS_PARAM_MAP[point.status] || '3'
+      }), null)
+      this.pointDetail = detail
+      this.pointDetailLoading = false
     },
+    // 卡片「更多>>」：跳转打开该项目对应的详情页面（原型交互13）
     handlePointMore(point) {
-      this.$message.info(`查看项目详情：${point.name}`)
+      this.$message.info(`跳转项目详情页：${point.projectCode || point.projectName || ''}`)
+    },
+    // 卡片「详情>>」：跳转运营填报列表页（原型交互17）
+    handlePointDetail(point) {
+      this.$message.info(`跳转运营填报列表页：${point.projectCode || point.projectName || ''}`)
     },
     handleMore() {
       this.$message.info('跳转项目清单页')

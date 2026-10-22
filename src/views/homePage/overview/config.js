@@ -18,20 +18,20 @@ import listIcon8 from '../list-icon-8.svg'
 import fullscreen1 from '../fullscreen-1.svg'
 import fullscreen2 from '../fullscreen-2.svg'
 
-import pinBlue from '../pin-blue.svg'
-import pinOrange from '../pin-orange.svg'
-import pinGreen from '../pin-green.svg'
+import station1 from '../station-1.png'
+import station2 from '../station-2.png'
+import station3 from '../station-3.png'
 
 export const fullscreenIcon = {
   1: fullscreen1, // 全屏
   2: fullscreen2 // 退出
 }
 
-// 地图点位 / 右下角图例图标：三色水滴 pin（蓝=无补贴、橙=有补贴、绿=合规清单，对齐原型）
+// 地图点位 / 右下角图例图标：station 三色图标（蓝=无补贴、橙=有补贴、绿=合规清单，与补贴分类一一对应）
 export const station_type = {
-  '无补贴': pinBlue,
-  '有补贴': pinOrange,
-  '合规清单': pinGreen
+  '无补贴': station1,
+  '有补贴': station2,
+  '合规清单': station3
 }
 
 // 行业定义（name 与接口 industry 字段一致；color 用于地图打点与图表，对齐原型配色）
@@ -109,6 +109,20 @@ export const HOVER_FIELDS = [
   { label: '项目编码', field: 'projectCode' },
   { label: '补贴类型', field: 'categoryName' }
 ]
+
+// 点位悬浮 mini 胶囊（原型：⚡电价 + 项目编号）：valueField 为项目级电价字段
+export const POINT_TIP = { valueField: 'settlementPrice', codeField: 'projectCode' }
+
+// 点位详情（/largeScreen/projectDetail）非标项目枚举文案
+// 发电项目（POWER）与非标项目（NON_STANDARD）卡片展示字段不同（原型交互13）
+export const PROJECT_DETAIL_TEXT = {
+  // 接入方式：1自动 2手动 3接入
+  accessMethod: { 1: '自动', 2: '手动', 3: '接入' },
+  // 生产及预警：0正常运行 1顺歌运行 2预警运行
+  productionTypes: { 0: '正常运行', 1: '顺歌运行', 2: '预警运行' },
+  // 是否平台转发：1是 2否，null/空 = 不涉及
+  platformTransfer: { 1: '是', 2: '否', none: '不涉及' }
+}
 
 // 项目卡片展示字段
 export const PROJECT_CARD_FIELDS = [
@@ -244,18 +258,22 @@ export const SUBSIDY_FILTERS = ['无补贴', '有补贴', '合规清单']
 
 // 地图左下角浮动菜单：结算电价（单选，可再点取消=不选；默认风电）
 // field 对应 mapDisplay 返回的省级电价字段，选中后按该字段热力着色
+// 标杆电价仅全国视图提供（下钻到省后由容器过滤掉，见 overview/index.vue 的 priceOptions）
 export const PRICE_OPTIONS = [
   { id: 'wind', label: '风电结算电价', field: 'avgWindSettlementPrice' },
   { id: 'pv', label: '光伏结算电价', field: 'avgPvSettlementPrice' },
   { id: 'benchmark', label: '标杆电价', field: 'benchmarkPrice' }
 ]
 
-// 地图悬浮省份浮层展示字段（交互8：鼠标移入省份弹出对应省份电价数据）
-export const REGION_PRICE_FIELDS = [
-  { label: '结算电价', field: 'avgSettlementPrice', unit: '元/kWh' },
-  { label: '风电结算电价', field: 'avgWindSettlementPrice', unit: '元/kWh' },
-  { label: '光伏结算电价', field: 'avgPvSettlementPrice', unit: '元/kWh' },
-  { label: '标杆电价', field: 'benchmarkPrice', unit: '元/kWh' }
+// 地图悬浮省份 / 市区浮层展示行（交互8）：
+// 差值 = 电价 - spot 均价；>0 绿色 + 向下箭头，<0 红色 + 向上箭头
+// 左下角电价菜单选中某维度时仅展示该行，未选中展示全部
+// nationalOnly：仅全国视图展示（下钻到省后无市区级标杆数据）
+// noDiff：标杆电价本身来自 spot（无独立 spot 均价可比），只展示数值不算差值
+export const REGION_PRICE_COMPARE = [
+  { label: '光伏结算电价', field: 'avgPvSettlementPrice', spotField: 'spotPvSettlementPrice' },
+  { label: '发电结算电价', field: 'avgWindSettlementPrice', spotField: 'spotWindSettlementPrice' },
+  { label: '标杆结算电价', field: 'benchmarkPrice', nationalOnly: true, noDiff: true }
 ]
 
 // 默认查询月份：当前月的前一个月（yyyy-MM）

@@ -3,6 +3,9 @@
  * 返回结构与真实后端保持一致：{ code: 200, msg: 'success', data: {...} }
  */
 
+const fs = require('fs')
+const path = require('path')
+
 // 省份（含省会坐标，用于地图打点与排名）
 const PROVINCES = [
   { code: '110000', name: '北京', lng: 116.407, lat: 39.904 },
@@ -99,6 +102,8 @@ function buildRankItems(names, rankingType, seedBase) {
 function buildMapProject(province, seed) {
   const nat = [0, 1, 1, null][seed % 4]
   const comp = nat === 1 ? [0, 1, null][seed % 3] : null
+  // 行业名与 CATEGORIES 严格一致（行业筛选按名称匹配）
+  const industries = ['能源电力', '节能环保', '智慧能源', '绿色交通', '其他']
   return {
     projectName: `${province.name}${seed % 2 === 0 ? '风电' : '光伏'}项目${seed}号`,
     projectCode: `PJ${province.code}${String(seed).padStart(3, '0')}`,
@@ -109,7 +114,17 @@ function buildMapProject(province, seed) {
     natProject: nat === null ? null : String(nat),
     compCatalog: comp === null ? null : String(comp),
     pvSettlementPrice: String(randomInt(20, 60, seed) / 100),
-    windSettlementPrice: String(randomInt(20, 60, seed + 5) / 100)
+    windSettlementPrice: String(randomInt(20, 60, seed + 5) / 100),
+    // 点位详情卡片字段（原型：点击点位弹出白色卡片）
+    industry: industries[seed % industries.length], // 行业（卡片顶部标签）
+    // 项目状态（在建/运营）：状态筛选（显示在建/显示运营）按此过滤
+    status: seed % 2 === 0 ? '在建' : '运营',
+    controller: `${province.name}市百色电力有限公司`, // 实控人
+    capacity: randomInt(500, 3000, seed + 7), // 装机容量 kW
+    hours: randomInt(80, 300, seed + 11), // 发电利用小时数 h
+    rate: randomInt(70, 99, seed + 13), // 达标率 %
+    settlementPrice: String(randomInt(20, 60, seed) / 100), // 结算电价 元/kWh（mini 胶囊同源）
+    subsidyPrice: String(randomInt(5, 30, seed + 17) / 100) // 补贴电价 元/kWh
   }
 }
 
@@ -121,8 +136,51 @@ function buildProvinceGroup(province, seed) {
     avgWindSettlementPrice: String(randomInt(25, 55, seed + 1) / 100),
     avgPvSettlementPrice: String(randomInt(25, 55, seed + 2) / 100),
     benchmarkPrice: String(randomInt(25, 50, seed + 3) / 100),
+    // spot 均价：区域悬浮 tooltip 的差值对比基准（电价 - spot 均价）
+    spotWindSettlementPrice: String(randomInt(25, 55, seed + 21) / 100),
+    spotPvSettlementPrice: String(randomInt(25, 55, seed + 23) / 100),
     projectList: list
   }
+}
+
+// 读取省份 GeoJSON（本地文件，按行政区码），用于按市区粒度生成电价
+const GEO_CACHE = {}
+function loadProvinceGeo(code) {
+  if (GEO_CACHE[code]) return GEO_CACHE[code]
+  try {
+    const file = path.resolve(__dirname, '../src/assets/maps', `${code}.json`)
+    const json = JSON.parse(fs.readFileSync(file, 'utf-8'))
+    GEO_CACHE[code] = json
+    return json
+  } catch (e) {
+    return null
+  }
+}
+
+// 省份下钻：按 GeoJSON 内的市区粒度生成电价数据（区域名与地图严格一致，便于 visualMap 着色）
+function buildCityPriceList(province) {
+  const geo = loadProvinceGeo(province.code)
+  if (!geo || !Array.isArray(geo.features)) return []
+  const base = Number(province.code) || 0
+  return geo.features
+    .map((f, i) => {
+      const name = (f.properties && f.properties.name) || ''
+      if (!name) return null
+      const seed = base / 1000 + i * 7 + 3
+      return {
+        name,
+        avgSettlementPrice: String(randomInt(30, 60, seed) / 100),
+        avgWindSettlementPrice: String(randomInt(25, 55, seed + 1) / 100),
+        avgPvSettlementPrice: String(randomInt(25, 55, seed + 2) / 100),
+        // 悬浮字段含标杆电价，市区粒度同步提供（菜单维度不含标杆）
+        benchmarkPrice: String(randomInt(25, 50, seed + 3) / 100),
+        // spot 均价：市区悬浮 tooltip 的差值对比基准（下钻视图仅展示光伏/发电两行）
+        spotWindSettlementPrice: String(randomInt(25, 55, seed + 21) / 100),
+        spotPvSettlementPrice: String(randomInt(25, 55, seed + 23) / 100),
+        projectCount: randomInt(2, 24, seed + 5)
+      }
+    })
+    .filter(Boolean)
 }
 
 function buildMonths(count) {
@@ -236,13 +294,83 @@ module.exports = [
     type: 'post',
     response: config => {
       const body = config.body || {}
+      // 行业筛选：空 = 全部；多选逗号分隔（与前端 industryParam 对应）
+      const industryFilter = String(body.industry || '').split(',').filter(Boolean)
+      // 状态筛选：1在建 2运营 3在建和运营 4未选择（未选择 = 全部，原型注5）
+      const status = String(body.status || '4')
+      const matchProject = p => {
+        const industryOk = industryFilter.length === 0 || industryFilter.includes(p.industry)
+        const statusOk =
+          status === '4' || status === '3' ||
+          (status === '1' && p.status === '在建') ||
+          (status === '2' && p.status === '运营')
+        return industryOk && statusOk
+      }
       if (body.provinceName) {
         // 省份请求：兼容全称/短名匹配
         const p = PROVINCES.find(x => body.provinceName.indexOf(x.name) > -1) || PROVINCES[0]
-        return ok(buildProvinceGroup(p, 5))
+        const group = buildProvinceGroup(p, 5)
+        group.projectList = (group.projectList || []).filter(matchProject)
+        // 下钻按市区着色：附带市区粒度电价（名称与 GeoJSON 区域一致）
+        group.cityPriceList = buildCityPriceList(p)
+        return ok(group)
       }
       // 全国请求：各省分组数组
-      return ok(PROVINCES.map((p, i) => buildProvinceGroup(p, i + 2)))
+      return ok(PROVINCES.map((p, i) => {
+        const group = buildProvinceGroup(p, i + 2)
+        group.projectList = (group.projectList || []).filter(matchProject)
+        return group
+      }))
+    }
+  },
+
+  // 地图点位详情：POST /largeScreen/projectDetail
+  // 入参 { industry, month, projectCode, status }
+  // 按 projectCode 末三位奇偶返回两类项目：偶数 → POWER 发电项目，奇数 → NON_STANDARD 非标项目
+  {
+    url: '/largeScreen/projectDetail',
+    type: 'post',
+    response: config => {
+      const body = config.body || {}
+      const code = String(body.projectCode || '')
+      const tail = Number(code.slice(-3)) || 0
+      const province = PROVINCES.find(p => code.indexOf(p.code) > -1) || PROVINCES[0]
+      const tail1 = tail + 1
+      const tail2 = tail + 2
+      const tail3 = tail + 3
+      const tail4 = tail + 4
+      const tail5 = tail + 5
+      if (tail % 2 === 1) {
+        // 非标项目（字段与真实接口一致：accessMethod/productionTypes/productionCapacity/platformTransfer）
+        return ok({
+          projectType: 'NON_STANDARD',
+          nonStandardDetail: {
+            projectName: `${province.name}东方低碳综合能源非标项目${tail}号`,
+            projectCode: code,
+            actualController: `${province.name}市百色电力有限公司`,
+            accessMethod: String(tail % 3 + 1), // 1自动 2手动 3接入
+            productionTypes: String(tail1 % 3), // 生产及预警：0正常运行 1顺歌运行 2预警运行
+            productionCapacity: String(randomInt(6, 30, tail2)), // 项目规模
+            platformTransfer: tail3 % 2 === 0 ? '1' : '2' // 是否平台转发：1是 2否
+          },
+          powerGenerationDetail: null
+        })
+      }
+      // 发电项目（字段与真实接口一致：capacity/hours/subePrice；editWindPrice 结算电价、rate 达标率为 swagger 补充字段）
+      return ok({
+        projectType: 'POWER',
+        nonStandardDetail: null,
+        powerGenerationDetail: {
+          projectName: `${province.name}${tail % 4 === 0 ? '风电' : '光伏'}项目${tail}号`,
+          projectCode: code,
+          actualController: `${province.name}市百色电力有限公司`,
+          capacity: String(randomInt(500, 3000, tail2)),
+          hours: String(randomInt(80, 300, tail3)),
+          rate: String(randomInt(70, 99, tail4)),
+          editWindPrice: String(randomInt(20, 60, tail5) / 100),
+          subePrice: String(randomInt(5, 30, tail1) / 100)
+        }
+      })
     }
   },
 

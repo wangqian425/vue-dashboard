@@ -20,7 +20,7 @@
 /**
  * 通用分类 Tab（纯展示，支持 v-model 单选 / 多选）
  * 字段名通过 fieldMap 自定义：{ label, value, count }
- * 多选模式（multiple）：与"全部"项双向联动——点"全部"全选、可逐个取消、全部取消自动回到全选
+ * 多选模式（multiple）：与"全部"项双向联动——点"全部"全选、可逐个取消、允许全部取消（清空态）
  */
 export default {
   name: 'CategoryTabs',
@@ -83,10 +83,12 @@ export default {
         // 点"全部"：全选所有分类；已全选则不重复触发
         if (this.isAllSelected) return
         next = this.realItems.map(i => i.value)
+      } else if (this.isAllSelected) {
+        // 全选状态下点击具体行业：切换为仅选中该行业，其余取消（原型交互）
+        next = [item.value]
       } else if (this.selectedList.includes(item.value)) {
+        // 再次点击取消选中；允许全部取消（原型注4：全部取消时页面数据清空，仅保留筛选器）
         next = this.selectedList.filter(v => v !== item.value)
-        // 全部取消时自动回到全选（与"全部"联动）
-        if (!next.length) next = this.realItems.map(i => i.value)
       } else {
         next = this.selectedList.concat(item.value)
       }
