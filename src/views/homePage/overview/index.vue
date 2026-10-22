@@ -7,7 +7,6 @@
           :points="visiblePoints"
           :categories="pointCategories"
           :field-map="POINT_FIELD_MAP"
-          :hover-fields="HOVER_FIELDS"
           :region-tooltip-data="provincePriceMap"
           :capitals="capitals"
           :capital-icon="capitalIcon"
@@ -18,7 +17,6 @@
           :subsidy-options="subsidyOptions"
           :subsidy-filter.sync="subsidyFilter"
           :subsidy-icons="subsidyIcons"
-          :point-tip="pointTip"
           :point-detail="pointDetail"
           :point-detail-loading="pointDetailLoading"
           :price-options="priceOptions"
@@ -69,7 +67,7 @@
               :colors="pieColors"
               :center-text="pieCenter"
               rose-type="area"
-              height="190px"
+              :height="pieChartHeight"
               @item-click="handlePieClick"
             />
           </PanelCard>
@@ -161,10 +159,6 @@ import {
   POINT_FIELD_MAP,
   POINT_CATEGORIES,
   classifyProject,
-  HOVER_FIELDS,
-  PROJECT_CARD_FIELDS,
-  PROJECT_FIELD_MAP,
-  STATUS_TAG_TYPE,
   ENERGY_LABELS,
   OVERVIEW_METRICS,
   PIE_FIELD_MAP,
@@ -185,8 +179,7 @@ import {
   findProvince,
   PROVINCE_CAPITALS,
   station_type,
-  fullscreenIcon,
-  POINT_TIP
+  fullscreenIcon
 } from './config'
 import provinceIcon from '../province.svg'
 
@@ -214,10 +207,6 @@ export default {
       RANK_TYPES,
       RANK_FIELD_MAP,
       POINT_FIELD_MAP,
-      HOVER_FIELDS,
-      PROJECT_CARD_FIELDS,
-      PROJECT_FIELD_MAP,
-      STATUS_TAG_TYPE,
       PIE_FIELD_MAP,
       MANAGE_COLORS,
       energyLabels: ENERGY_LABELS,
@@ -226,11 +215,11 @@ export default {
       subsidyOptions: SUBSIDY_FILTERS,
       subsidyIcons: station_type,
       fullscreenIcons: fullscreenIcon,
-      // 点位悬浮 mini 胶囊配置（原型交互）
-      pointTip: POINT_TIP,
       // 点位详情接口数据与加载态（点击点位 → /largeScreen/projectDetail）
       pointDetail: null,
       pointDetailLoading: false,
+      // 请求序号：用于丢弃过期响应（详见 methods.nextSeq）
+      reqSeq: 0,
 
       // 地图筛选状态（子组件 .sync 回写）
       // 状态筛选（在建/运营）默认不选中 = 展示全量数据（原型注5）
@@ -249,13 +238,10 @@ export default {
       rankList: [],
       // 建设/运营管理项目报表原始数据（逐月数组，经 manageTrend 计算属性映射为图表结构）
       manageList: [],
-      // 建设/运营管理项目报表的能源类型（报表标题展示，独立于运营项目情况的切换按钮）
-      manageEnergyType: 'wind',
       // 运营项目情况的能源类型（风电/光伏/非标，卡片右上角按钮切换，独立状态不与上报表联动）
       operateEnergyType: 'wind',
       // 运营项目情况原始数据（queryOperateDetail 返回，指标与图表一体）
       operateDetail: {},
-      projectList: [],
       activeLayers: [],
       // 地图展示原始数据（mapDisplay 返回：全国=省份数组，省份=单对象；归一化存为省份数组）
       provinceGroups: [],
@@ -275,16 +261,17 @@ export default {
       const isAll = all.length > 0 && all.every(id => ids.includes(id))
       return isAll ? 'all' : ids.join(',')
     },
-    requestParams() {
-      return {
-        level: this.query.level,
-        provinceCode: this.query.provinceCode,
-        cityCode: this.query.cityCode,
-        category: this.categoryParam,
-        month: this.query.month,
-        rankType: this.query.rankType,
-        energyType: this.query.energyType
-      }
+    // 报表刷新键：影响全部报表接口入参的条件（月份/行业/状态/下钻层级）
+    // 用于替代 query 深监听，避免无关字段（如排名维度）触发全量请求
+    reportKey() {
+      return [
+        this.query.month,
+        this.categoryParam,
+        this.statusParam,
+        this.query.level,
+        this.query.provinceCode,
+        this.query.cityCode
+      ].join('|')
     },
     // 当前下钻省份的接口全称（山东省/内蒙古自治区），全国层级为空
     currentProvinceFullName() {
@@ -329,10 +316,6 @@ export default {
       const key = [...this.buildFilter].sort().join(',')
       return STATUS_PARAM_MAP[key] || '4'
     },
-    // 建设/运营管理项目报表标题的能源类型（独立于运营项目情况的切换按钮）
-    energyLabel() {
-      return ENERGY_LABELS[this.manageEnergyType] || '风电'
-    },
     manageTitle() {
       return `建设/运营管理项目`
     },
@@ -364,6 +347,11 @@ export default {
     },
     pieData() {
       return (this.overview.industryNum || []).filter(item => item.industry !== INDUSTRY_ALL)
+    },
+    // 饼图容器高度按数据行数自适应：行多时撑高（左栏内容区可滚动），避免图例挤压显示不完善
+    pieChartHeight() {
+      const rows = (this.pieData || []).length
+      return Math.max(190, rows * 38 + 30) + 'px'
     },
     // 运营项目情况指标：按能源类型取对应指标项，字段取自 queryOperateDetail 返回，图标按 label 容错匹配
     summaryMetrics() {
@@ -433,9 +421,6 @@ export default {
     currentRankUnit() {
       const target = this.rankTypeOptions.find(t => t.value === this.query.rankType)
       return target ? target.unit : ''
-    },
-    showProjectList() {
-      return this.query.level !== 'country'
     },
     layerOptions() {
       return CATEGORIES.map(c => ({ key: c.id, label: c.name, color: c.color }))
@@ -526,18 +511,13 @@ export default {
     }
   },
   watch: {
-    query: {
-      deep: true,
-      handler() {
-        this.fetchAll()
-      }
+    // 月份/行业/状态/下钻层级变化 → 全量刷新（单一入口，避免多监听重复触发同一批请求）
+    reportKey() {
+      this.fetchAll()
     },
-    // 地图状态筛选（在建/运营）：与一级分类联动生效，切换后同步刷新界面整体数据（原型注5）
-    buildFilter: {
-      deep: true,
-      handler() {
-        this.fetchAll()
-      }
+    // 排名维度切换 → 只刷新排名，其它报表无需重取
+    'query.rankType'() {
+      this.fetchRank()
     },
     // 运营项目情况能源类型切换（风电/光伏/非标）：只重新请求运营项目情况，不影响其它报表
     operateEnergyType() {
@@ -565,9 +545,19 @@ export default {
         return defaultValue
       }
     },
+    // 请求序号：每次发起请求自增，写回数据前校验序号，丢弃已过期（被更新请求取代）的响应。
+    // 场景：快速切换月份/行业时，先发的慢响应若后到会覆盖新数据，表现为"刷新了但报表还是旧的"
+    nextSeq() {
+      this.reqSeq += 1
+      return this.reqSeq
+    },
+    isStale(seq) {
+      return seq !== this.reqSeq
+    },
     // 项目总览报表：POST queryProjectOverview，入参 = 全局报表参数
-    async fetchOverview() {
+    async fetchOverview(seq = this.nextSeq()) {
       const data = await this.safeRequest(() => queryProjectOverview(this.reportParams), {})
+      if (this.isStale(seq)) return
       this.overview = data || {}
       // 行业 tabs 计数独立保存：分类全部取消选中时页面数据清空，但筛选器需保留供重新选择
       if (data && Array.isArray(data.industryNum) && data.industryNum.length) {
@@ -575,16 +565,18 @@ export default {
       }
     },
     // 建设/运营管理项目报表：POST queryBuildandOperate，入参 = 全局报表参数
-    async fetchManageTrend() {
+    async fetchManageTrend(seq = this.nextSeq()) {
       const data = await this.safeRequest(() => queryBuildandOperate(this.reportParams), [])
+      if (this.isStale(seq)) return
       this.manageList = Array.isArray(data) ? data : []
     },
     // 地区排名：全国/省内双接口，返回 [{ nameType, value }] 全称数据
     // nameType（山东省）转为地图短名（山东）展示，并从配置字典反查 code 供地图下钻
-    async fetchRank() {
+    async fetchRank(seq = this.nextSeq()) {
       const isCountry = this.query.level === 'country'
       const api = isCountry ? queryNationalRanking : queryRegionRanking
       const data = await this.safeRequest(() => api(this.rankParams), [])
+      if (this.isStale(seq)) return
       const list = Array.isArray(data) ? data : []
       this.rankList = list.map(item => {
         const fullName = item.nameType || ''
@@ -598,38 +590,46 @@ export default {
       })
     },
     // 运营项目情况：POST queryOperateDetail，入参 = 全局报表参数 + operateType（随风电/光伏/非标切换联动）
-    async fetchOperateDetail() {
+    async fetchOperateDetail(seq = this.nextSeq()) {
       const params = Object.assign({}, this.reportParams, {
         operateType: OPERATE_TYPE_MAP[this.operateEnergyType] || '1'
       })
       const data = await this.safeRequest(() => queryOperateDetail(params), {})
+      if (this.isStale(seq)) return
       this.operateDetail = data || {}
     },
 
+    // 全量刷新：一次取数共用同一序号，任一更晚的请求都会让这批结果作废，保证界面与最后一次操作一致
     async fetchAll() {
       // 行业分类全部取消选中（原型注4）：地图点位与各面板数据全部清空（空白效果），
       // 仅保留行业 tabs 计数（categoryStats）供重新选择
       if (Array.isArray(this.query.category) && this.query.category.length === 0) {
+        const seq = this.nextSeq()
         this.overview = {}
         this.manageList = []
         this.operateDetail = {}
         this.rankList = []
         this.provinceGroups = []
+        // 清空后立刻自增序号：仍在飞行的上一批响应回来时判定为过期，不会回填旧数据
+        this.nextSeq()
+        if (this.isStale(seq)) return
         return
       }
+      const seq = this.nextSeq()
       // 前 5 个请求各自写回自己的 data，这里只做并发编排，不依赖返回值
       await Promise.all([
-        this.fetchOverview(),
-        this.fetchManageTrend(),
-        this.fetchOperateDetail(),
-        this.fetchRank(),
-        this.fetchMapDisplay()
+        this.fetchOverview(seq),
+        this.fetchManageTrend(seq),
+        this.fetchOperateDetail(seq),
+        this.fetchRank(seq),
+        this.fetchMapDisplay(seq)
       ])
     },
     // 地图展示：POST queryMapDisplay，入参 = 全局报表参数
     // 全国返回省份数组 / 省份返回单对象，统一归一化为省份数组 provinceGroups
-    async fetchMapDisplay() {
+    async fetchMapDisplay(seq = this.nextSeq()) {
       const data = await this.safeRequest(() => queryMapDisplay(this.reportParams), [])
+      if (this.isStale(seq)) return
       const groups = Array.isArray(data) ? data : (data ? [data] : [])
       this.provinceGroups = groups
     },
@@ -812,6 +812,11 @@ export default {
         background-color: rgba(255,255,255,1);
         box-shadow: 0px 0px 16px 0px rgba(0,0,0,0.05);
         font-family: Arial-regular;
+      }
+      /* 低分辨率（1080P）兼容：运营项目情况面板不压缩（保最小高度），
+         高度不足时由列滚动条承载，避免指标/图表被裁切遮挡 */
+      .summary-card {
+        min-height: 430px;
       }
     }
   }

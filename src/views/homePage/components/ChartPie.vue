@@ -43,29 +43,61 @@ export default {
       chart: null
     }
   },
-  watch: {
-    data: {
-      deep: true,
-      handler() {
-        this.renderChart()
+  computed: {
+    // 渲染源：所有影响渲染的 props 汇总，统一监听，避免遗漏（如仅 centerText/colors 变化不重绘）
+    renderSource() {
+      return {
+        data: this.data,
+        fieldMap: this.fieldMap,
+        colors: this.colors,
+        centerText: this.centerText,
+        donut: this.donut,
+        roseType: this.roseType,
+        unit: this.unit,
+        minVisibleRatio: this.minVisibleRatio,
+        showLegend: this.showLegend,
+        extraOption: this.extraOption
       }
-    },
-    extraOption: {
+    }
+  },
+  watch: {
+    renderSource: {
       deep: true,
       handler() {
-        this.renderChart()
+        // 同一帧内多个 props 一起变化（接口刷新后数据/配色/中心值同时更新）只重绘一次
+        this.scheduleRender()
       }
     }
   },
   mounted() {
     this.initChart()
+    // 容器尺寸变化（flex 自适应、面板显隐）时图表跟随缩放，window resize 覆盖不到这些场景
+    if (typeof ResizeObserver !== 'undefined' && this.$refs.chart) {
+      this.resizeObserver = new ResizeObserver(() => {
+        if (this.chart) this.chart.resize()
+      })
+      this.resizeObserver.observe(this.$refs.chart)
+    }
   },
   beforeDestroy() {
+    if (this.resizeObserver) {
+      this.resizeObserver.disconnect()
+      this.resizeObserver = null
+    }
     if (!this.chart) return
     this.chart.dispose()
     this.chart = null
   },
   methods: {
+    // 合并重绘：microtask 内去重，避免接口刷新时一次变更触发多轮 setOption
+    scheduleRender() {
+      if (this.renderScheduled) return
+      this.renderScheduled = true
+      Promise.resolve().then(() => {
+        this.renderScheduled = false
+        this.renderChart()
+      })
+    },
     initChart() {
       this.chart = echarts.init(this.$refs.chart)
       this.renderChart()

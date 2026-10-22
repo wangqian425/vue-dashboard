@@ -36,17 +36,27 @@ export default {
       legendSelected: {}
     }
   },
-  watch: {
-    series: {
-      deep: true,
-      handler() {
-        this.renderChart()
+  computed: {
+    // 渲染源：所有影响渲染的 props 汇总，统一监听，避免遗漏（如仅 yAxisNames/unit/colors 变化不重绘）
+    renderSource() {
+      return {
+        xData: this.xData,
+        series: this.series,
+        yAxisNames: this.yAxisNames,
+        colors: this.colors,
+        showLegend: this.showLegend,
+        stack: this.stack,
+        unit: this.unit,
+        extraOption: this.extraOption
       }
-    },
-    xData: {
+    }
+  },
+  watch: {
+    renderSource: {
       deep: true,
       handler() {
-        this.renderChart()
+        // 同一帧内 xData/series/colors 等一起变化时只重绘一次
+        this.scheduleRender()
       }
     }
   },
@@ -70,6 +80,15 @@ export default {
     this.chart = null
   },
   methods: {
+    // 合并重绘：microtask 内去重，避免接口刷新时一次变更触发多轮 setOption
+    scheduleRender() {
+      if (this.renderScheduled) return
+      this.renderScheduled = true
+      Promise.resolve().then(() => {
+        this.renderScheduled = false
+        this.renderChart()
+      })
+    },
     initChart() {
       this.chart = echarts.init(this.$refs.chart)
       // 点击图例切换系列显隐时，image:// 图标 echarts 不会自动置灰，这里联动重建图例图标

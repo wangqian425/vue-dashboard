@@ -135,8 +135,6 @@ export default {
     },
     // 分类配色：[{ id, name, color }]
     categories: { type: Array, default: () => [] },
-    // 悬浮卡片展示字段：[{ label, field, unit }]
-    hoverFields: { type: Array, default: () => [] },
     defaultColor: { type: String, default: DEFAULT_COLOR },
     // 兼容旧接口：图层与已激活图层（此处用 echarts legend 控制显隐，prop 保留以便迁移）
     layers: { type: Array, default: () => [] },
@@ -168,8 +166,6 @@ export default {
     },
     // 当前地图区域：'' = 全国地图；省份行政 code = 下钻到该省区县地图
     mapCode: { type: String, default: '' },
-    // 点位悬浮 mini 胶囊（原型：⚡电价 + 项目编号）：{ valueField, codeField }
-    pointTip: { type: Object, default: () => ({}) },
     // 点位详情接口数据（/largeScreen/projectDetail 返回 data）：projectType 决定卡片展示字段
     pointDetail: { type: Object, default: null },
     // 点位详情接口加载中
@@ -279,6 +275,7 @@ export default {
     this.initChart()
   },
   beforeDestroy() {
+    this.unbindWrapEvents()
     this.unbindFullscreen()
     if (this.chart) {
       this.chart.dispose()
@@ -339,6 +336,29 @@ export default {
         this.hoverIcon = ''
       })
       this.bindFullscreen()
+      // 覆盖层兜底：鼠标移到容器内非画布区域（电价菜单/返回/全屏/详情卡片等 DOM）或离开容器时，
+      // zrender 不再派发 mousemove/globalout，鼠标跟随图标不会自动隐藏，会残留在最后悬浮的省份上
+      const wrapEl = this.$refs.wrap
+      this._onWrapMove = e => {
+        if (this.hoverIcon && e.target && e.target.tagName !== 'CANVAS') this.hoverIcon = ''
+      }
+      this._onWrapLeave = () => {
+        this.hoverIcon = ''
+      }
+      if (wrapEl) {
+        wrapEl.addEventListener('mousemove', this._onWrapMove)
+        wrapEl.addEventListener('mouseleave', this._onWrapLeave)
+      }
+    },
+    // 解绑容器级兜底事件（与 bindFullscreen 成对）
+    unbindWrapEvents() {
+      const wrapEl = this.$refs.wrap
+      if (wrapEl) {
+        if (this._onWrapMove) wrapEl.removeEventListener('mousemove', this._onWrapMove)
+        if (this._onWrapLeave) wrapEl.removeEventListener('mouseleave', this._onWrapLeave)
+      }
+      this._onWrapMove = null
+      this._onWrapLeave = null
     },
     // 加载并注册省市区县边界 GeoJSON（本地文件，webpack 动态 import 按需加载异步 chunk），成功后重绘
     async loadRegionMap() {
@@ -429,25 +449,7 @@ export default {
         })
       }
 
-      // 省会标记（仅全国视图：下钻到省后显示的是地市，不再标省会）
-      if (this.capitalIcon && this.capitals.length && !this.mapCode) {
-        // series.push({
-        //   name: '省会',
-        //   type: 'scatter',
-        //   coordinateSystem: 'geo',
-        //   symbol: `image://${this.capitalIcon}`,
-        //   symbolSize: this.capitalSize,
-        //   // 不响应鼠标：避免遮挡省份悬浮高亮与点击下钻
-        //   silent: true,
-        //   // 底图与点位的绘制层级
-        //   z: 6,
-        //   data: this.capitals.map(c => ({
-        //     name: c.name,
-        //     value: [c.lng, c.lat],
-        //     city: c.city
-        //   }))
-        // })
-      }
+      // 省会标记默认不渲染（会遮挡省份悬浮高亮与点击下钻），保留 capitals prop 供需要时开启
       return series
     },
     // 底图系列：区域绘制 + 电价着色（visualMap 作用其上），与 geo 共享坐标系，保证缩放平移时散点同步
@@ -627,6 +629,8 @@ export default {
           }
         ],
         // 左下角颜色图例：改用 echarts visualMap（连续型），与地图着色同源
+        // 无数据占位：选中了电价维度但接口无数据（如下钻省份全部为 0）时，
+        // 图例仍显示（高/低），色阶置灰，避免左下角空缺；未选电价维度才完全隐藏（交互7）
         visualMap: hasColor
           ? {
             type: 'continuous',
@@ -648,7 +652,24 @@ export default {
             // 色阶：浅蓝 → 深蓝（与地图着色一致）
             inRange: { color: ['#d6e8ff', '#7db9ff', '#0088ff'] }
           }
-          : { show: false },
+          : (this.priceType
+            ? {
+              type: 'continuous',
+              seriesIndex: 0,
+              // 默认占位区间 0~1，仅作视觉占位，不参与着色（此时系列 data 为空）
+              min: 0,
+              max: 1,
+              orient: 'vertical',
+              left: legendLeft,
+              bottom: 12,
+              itemWidth: 16,
+              itemHeight: 160,
+              calculable: false,
+              text: ['高', '低'],
+              textStyle: { color: '#c0c4cc', fontSize: 12 },
+              inRange: { color: ['#f0f2f5', '#f0f2f5'] }
+            }
+            : { show: false }),
         // 分类筛选已由顶部 CategoryTabs 承担，且底部中间需留给全屏按钮，故关闭内置图例
         legend: { show: false },
         series: [this.buildMapSeries(mapName, hasColor)].concat(this.buildSeries())
@@ -658,10 +679,6 @@ export default {
     // tooltip 深色胶囊外壳（原型效果）：所有系列统一包裹
     wrapTooltip(html) {
       return `<div style="background: rgba(23, 35, 54, 0.9); color: #fff; padding: 6px 10px; border-radius: 6px; font-size: 12px; line-height: 1.7; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3); white-space: nowrap;">${html}</div>`
-    },
-    // 点位悬浮 mini 胶囊（原型：黑色圆角胶囊，⚡ + 电价 + 编号）
-    wrapMini(html) {
-      return `<div style="display:inline-flex;align-items:center;background: rgba(15, 25, 40, 0.92); color: #fff; padding: 4px 10px; border-radius: 14px; font-size: 12px; line-height: 1.5; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3); white-space: nowrap;">${html}</div>`
     },
     handleClick(params) {
       if (params.seriesType === 'scatter') {
