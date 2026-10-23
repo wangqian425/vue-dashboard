@@ -39,7 +39,6 @@
             :items="categoryTabs"
             :field-map="CATEGORY_FIELD_MAP"
             :value="query.category"
-            multiple
             @input="handleCategoryChange"
           />
         </div>
@@ -254,13 +253,9 @@ export default {
     }
   },
   computed: {
-    // 多选分类 → 请求参数：全选传 'all'，部分选择传逗号分隔
+    // 单选分类 → 刷新键组成部分：'all' = 全部，其它为行业 id
     categoryParam() {
-      const ids = this.query.category
-      if (!Array.isArray(ids)) return ids
-      const all = CATEGORIES.map(c => c.id)
-      const isAll = all.length > 0 && all.every(id => ids.includes(id))
-      return isAll ? 'all' : ids.join(',')
+      return this.query.category || 'all'
     },
     // 报表刷新键：影响全部报表接口入参的条件（月份/行业/状态/下钻层级）
     // 用于替代 query 深监听，避免无关字段（如排名维度）触发全量请求
@@ -282,7 +277,7 @@ export default {
       return hit ? hit.full : name
     },
     // 全局报表请求参数（单一来源，所有报表接口共用这 4 个字段）
-    // industry: 行业类型，多个逗号分隔（能源电力,节能环保,智慧能源,绿色交通,其他），空=全部
+    // industry: 行业类型（单选），全部传空字符串
     // month: 查询月份 yyyy-MM
     // provinceName: 省份（下钻省份的接口全称），空=全国
     // status: 项目状态 1在建; 2运营; 3在建和运营; 4未选择
@@ -301,16 +296,12 @@ export default {
         rankingType: this.query.rankType
       })
     },
-    // 多选行业 → 接口 industry 参数：全选传 ''，单选传行业名，多选逗号分隔
+    // 单选行业 → 接口 industry 参数：全部传空字符串，具体行业传行业名
     industryParam() {
-      const ids = this.query.category
-      if (!Array.isArray(ids)) return ids || ''
-      const all = CATEGORIES.map(c => c.id)
-      if (all.length > 0 && all.every(id => ids.includes(id))) return ''
-      return ids.map(id => {
-        const cat = CATEGORIES.find(c => c.id === id)
-        return cat ? cat.name : id
-      }).join(',')
+      const id = this.query.category
+      if (!id || id === 'all') return ''
+      const cat = CATEGORIES.find(c => c.id === id)
+      return cat ? cat.name : id
     },
     // 地图状态筛选（在建/运营多选）→ 接口 status 枚举
     statusParam() {
@@ -427,7 +418,7 @@ export default {
       return CATEGORIES.map(c => ({ key: c.id, label: c.name, color: c.color }))
     },
     // 地图点位：provinceGroups.projectList 平铺归一化
-    // 分类按业务口径推导：无补贴 natProject=0/null；有补贴 natProject=1 && compCatalog!=1/null；合规 natProject=1 && compCatalog=1
+    // 分类按业务口径推导：合规 natProject=1 && compCatalog=1（优先）；有补贴 natProject=1；其余无补贴 natProject!=1
     points() {
       const list = []
       this.provinceGroups.forEach(group => {
@@ -601,21 +592,8 @@ export default {
     },
 
     // 全量刷新：一次取数共用同一序号，任一更晚的请求都会让这批结果作废，保证界面与最后一次操作一致
+    // 全量刷新：一次取数共用同一序号，任一更晚的请求都会让这批结果作废，保证界面与最后一次操作一致
     async fetchAll() {
-      // 行业分类全部取消选中（原型注4）：地图点位与各面板数据全部清空（空白效果），
-      // 仅保留行业 tabs 计数（categoryStats）供重新选择
-      if (Array.isArray(this.query.category) && this.query.category.length === 0) {
-        const seq = this.nextSeq()
-        this.overview = {}
-        this.manageList = []
-        this.operateDetail = {}
-        this.rankList = []
-        this.provinceGroups = []
-        // 清空后立刻自增序号：仍在飞行的上一批响应回来时判定为过期，不会回填旧数据
-        this.nextSeq()
-        if (this.isStale(seq)) return
-        return
-      }
       const seq = this.nextSeq()
       // 前 5 个请求各自写回自己的 data，这里只做并发编排，不依赖返回值
       await Promise.all([
@@ -678,7 +656,7 @@ export default {
     handlePieClick(params) {
       const target = CATEGORIES.find(c => c.name === params.name)
       if (target) {
-        this.query.category = [target.id]
+        this.query.category = target.id
       }
     },
     // 点位点击：详情卡片由地图组件弹出，此处请求项目详情接口并回传给卡片

@@ -96,9 +96,9 @@ function buildRankItems(names, rankingType, seedBase) {
 
 // 生成地图展示数据（mapDisplay）：每省 = 电价汇总 + 项目列表
 // projectList 分类口径（业务规则）：
-//   无补贴：natProject = 0 或 null
-//   有补贴：natProject = 1 && (compCatalog != 1 或 null)
-//   合规：  natProject = 1 && compCatalog = 1
+//   无补贴：natProject != 1
+//   有补贴：natProject = 1
+//   合规：  natProject = 1 && compCatalog = 1（优先判定）
 function buildMapProject(province, seed) {
   const nat = [0, 1, 1, null][seed % 4]
   const comp = nat === 1 ? [0, 1, null][seed % 3] : null

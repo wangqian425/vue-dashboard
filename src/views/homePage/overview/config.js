@@ -93,13 +93,16 @@ export const POINT_CATEGORIES = [
 ]
 
 // projectList 分类规则（业务口径）：
-//   无补贴：natProject = 0 或 null
-//   有补贴：natProject = 1 && (compCatalog != 1 或 null)
+//   无补贴：natProject != 1（含 0 / null / 空）
+//   有补贴：natProject = 1
 //   合规：  natProject = 1 && compCatalog = 1
+// 合规与有补贴条件重叠，合规更具体，优先判定（每点只归属一个分类）
 export function classifyProject(natProject, compCatalog) {
-  if (Number(natProject) === 1) {
-    return Number(compCatalog) === 1 ? 'compliance' : 'subsidy'
-  }
+  // 合规：natProject = 1 && compCatalog = 1
+  if (Number(natProject) === 1 && Number(compCatalog) === 1) return 'compliance'
+  // 有补贴：natProject = 1
+  if (Number(natProject) === 1) return 'subsidy'
+  // 无补贴：natProject != 1
   return 'noSubsidy'
 }
 
@@ -281,13 +284,13 @@ const now = new Date()
 const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1)
 const DEFAULT_MONTH = `${prevMonth.getFullYear()}-${String(prevMonth.getMonth() + 1).padStart(2, '0')}`
 
-// 默认查询条件（energyType 一并纳入，由 query 深度监听统一触发重新请求）
+// 默认查询条件
 export const DEFAULT_QUERY = {
   level: 'country', // country | province | city
   provinceCode: '',
   cityCode: '',
   provinceName: '',
-  category: CATEGORIES.map(c => c.id), // 多选分类 id 数组，全选即"全部"
+  category: 'all', // 行业单选：'all' = 全部（industry 传空字符串），其它为分类 id
   month: DEFAULT_MONTH,
   rankType: 'projectCount',
   energyType: 'wind' // 风电 / 光伏 / 非标

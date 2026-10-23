@@ -61,8 +61,7 @@ export function queryRegionRanking(data) {
 //     natProject, compCatalog, pvSettlementPrice, windSettlementPrice }] }]
 //   省份请求 → 单个同结构对象（当前省）
 // projectList 分类口径：
-//   无补贴：natProject = 0 或 null；有补贴：natProject = 1 && (compCatalog != 1 或 null)；
-//   合规：natProject = 1 && compCatalog = 1
+//   无补贴：natProject != 1；有补贴：natProject = 1；合规：natProject = 1 && compCatalog = 1（优先判定）
 export function queryMapDisplay(data) {
   return postRequest('/largeScreen/mapDisplay', data)
 }
