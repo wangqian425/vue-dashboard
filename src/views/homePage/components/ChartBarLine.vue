@@ -149,7 +149,28 @@ export default {
 
       const option = {
         color: this.colors,
-        tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }},
+        tooltip: {
+          trigger: 'axis',
+          axisPointer: { type: 'shadow' },
+          // 折线系列 itemStyle.color=#fff（白心圆点），默认 marker 会渲染成白色圆点看不见；
+          // 按系列类型自绘 marker 与图例一致：柱=色块，折线=彩边白心圆点
+          formatter: params => {
+            if (!Array.isArray(params) || !params.length) return ''
+            const palette = this.colors && this.colors.length ? this.colors : ['#909399']
+            const title = params[0].axisValueLabel || params[0].name || ''
+            const rows = params.map(p => {
+              const idx = p.seriesIndex != null ? p.seriesIndex : 0
+              const color = palette[idx % palette.length]
+              const isLine = (series[idx] && (series[idx].type || 'bar')) === 'line'
+              const marker = isLine
+                ? `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#fff;border:2px solid ${color};box-sizing:border-box;margin-right:6px;vertical-align:-1px;"></span>`
+                : `<span style="display:inline-block;width:12px;height:6px;border-radius:3px;background:${color};margin-right:6px;vertical-align:-1px;"></span>`
+              const value = p.value == null ? '-' : p.value
+              return `<div style="margin-top:4px;">${marker}${p.seriesName}&nbsp;&nbsp;<b>${value}</b></div>`
+            }).join('')
+            return `<div style="font-weight:600;">${title}</div>${rows}`
+          }
+        },
         legend: this.showLegend
           ? {
             top: 0,
