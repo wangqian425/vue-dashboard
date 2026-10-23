@@ -260,23 +260,39 @@ export const BUILD_FILTERS = [
 export const SUBSIDY_FILTERS = ['无补贴', '有补贴', '合规清单']
 
 // 地图左下角浮动菜单：结算电价（单选，可再点取消=不选；默认风电）
-// field 对应 mapDisplay 返回的省级电价字段，选中后按该字段热力着色
+// fields 为候选字段列表（按序取第一个有效值）：真实接口可能返回 avgXxx（null）
+// 或 xxx（字符串数值，如 "0.4155"），两种字段名都要兼容
 // 标杆电价仅全国视图提供（下钻到省后由容器过滤掉，见 overview/index.vue 的 priceOptions）
 export const PRICE_OPTIONS = [
-  { id: 'wind', label: '风电结算电价', field: 'avgWindSettlementPrice' },
-  { id: 'pv', label: '光伏结算电价', field: 'avgPvSettlementPrice' },
-  { id: 'benchmark', label: '标杆电价', field: 'benchmarkPrice' }
+  { id: 'wind', label: '风电结算电价', field: 'avgWindSettlementPrice', fields: ['avgWindSettlementPrice', 'windSettlementPrice'] },
+  { id: 'pv', label: '光伏结算电价', field: 'avgPvSettlementPrice', fields: ['avgPvSettlementPrice', 'pvSettlementPrice'] },
+  { id: 'benchmark', label: '标杆电价', field: 'benchmarkPrice', fields: ['benchmarkPrice'] }
 ]
+
+// 从对象中按候选字段列表取第一个「数值有效」的原始值，兼容字符串数值（"0.4155" / " 0.3 "）；
+// 全部无效（undefined/null/空串/非数值）返回 null
+export function pickPriceValue(obj, fields) {
+  if (!obj) return null
+  const list = Array.isArray(fields) ? fields : [fields]
+  for (let i = 0; i < list.length; i++) {
+    const raw = obj[list[i]]
+    if (raw === undefined || raw === null || raw === '') continue
+    const n = typeof raw === 'number' ? raw : parseFloat(String(raw).trim())
+    if (!isNaN(n)) return raw
+  }
+  return null
+}
 
 // 地图悬浮省份 / 市区浮层展示行（交互8）：
 // 差值 = 电价 - spot 均价；>0 绿色 + 向下箭头，<0 红色 + 向上箭头
 // 左下角电价菜单选中某维度时仅展示该行，未选中展示全部
+// fields：候选字段（avgXxx 为 null 时回退 xxx，兼容字符串数值），用 pickPriceValue 取值
 // nationalOnly：仅全国视图展示（下钻到省后无市区级标杆数据）
 // noDiff：标杆电价本身来自 spot（无独立 spot 均价可比），只展示数值不算差值
 export const REGION_PRICE_COMPARE = [
-  { label: '光伏结算电价', field: 'avgPvSettlementPrice', spotField: 'spotPvSettlementPrice' },
-  { label: '发电结算电价', field: 'avgWindSettlementPrice', spotField: 'spotWindSettlementPrice' },
-  { label: '标杆结算电价', field: 'benchmarkPrice', nationalOnly: true, noDiff: true }
+  { label: '光伏结算电价', field: 'avgPvSettlementPrice', fields: ['avgPvSettlementPrice', 'pvSettlementPrice'], spotField: 'spotPvSettlementPrice' },
+  { label: '发电结算电价', field: 'avgWindSettlementPrice', fields: ['avgWindSettlementPrice', 'windSettlementPrice'], spotField: 'spotWindSettlementPrice' },
+  { label: '标杆结算电价', field: 'benchmarkPrice', fields: ['benchmarkPrice'], nationalOnly: true, noDiff: true }
 ]
 
 // 默认查询月份：当前月的前一个月（yyyy-MM）
@@ -348,15 +364,28 @@ export const REGION_SPLIT = {
   ],
   河北: [
     { name: '冀北', cities: ['唐山', '张家口', '秦皇岛', '承德', '廊坊'] },
-    { name: '河北南网', cities: ['石家庄', '保定', '沧州', '衡水', '邢台', '邯郸'] }
+    { name: '冀南', cities: ['石家庄', '保定', '沧州', '衡水', '邢台', '邯郸'] }
   ]
 }
 
 // 接口全称（山东省/内蒙古自治区）→ 地图短名（山东/内蒙古）
 export function provinceShortName(fullName) {
-  const hit = PROVINCE_LIST.find(p => p.full === fullName)
+  const name = String(fullName || '').trim()
+  if (!name) return ''
+  const hit = PROVINCE_LIST.find(p => p.full === name)
   if (hit) return hit.name
-  return String(fullName || '').replace(/(省|市|自治区)$/, '')
+  // 真实接口的项目 provinceName 可能是长地名（如「内蒙古自治区阿拉善左旗××风电场」），
+  // 按省份全称/短名前缀归一，保证与地图区域名（china.json）一致
+  const prefix = PROVINCE_LIST.find(p => name.indexOf(p.full) === 0 || name.indexOf(p.name) === 0)
+  if (prefix) return prefix.name
+  return name.replace(/(省|市|自治区)$/, '')
+}
+
+// 经纬度兼容：真实接口可能返回逗号小数（"110,807"）或字符串数字，统一转 number；无效返回 null
+export function toCoordNumber(value) {
+  if (value === undefined || value === null || value === '') return null
+  const n = parseFloat(String(value).trim().replace(/,/g, '.'))
+  return isNaN(n) ? null : n
 }
 
 // 地图短名/全称 → 省份字典项（含 code/full/name）

@@ -109,7 +109,7 @@ import * as echarts from 'echarts'
 import chinaJson from '@/assets/maps/china.json'
 import * as provinceMapLoaders from '@/assets/maps'
 import resize from '@/components/Charts/mixins/resize'
-import { REGION_PRICE_COMPARE, POINT_CATEGORIES, PROJECT_DETAIL_TEXT } from '../overview/config'
+import { REGION_PRICE_COMPARE, POINT_CATEGORIES, PROJECT_DETAIL_TEXT, pickPriceValue } from '../overview/config'
 import priceIcon from '../price.png'
 
 // 注册中国地图（模块级只注册一次）
@@ -336,29 +336,41 @@ export default {
         this.hoverIcon = ''
       })
       this.bindFullscreen()
-      // 覆盖层兜底：鼠标移到容器内非画布区域（电价菜单/返回/全屏/详情卡片等 DOM）或离开容器时，
-      // zrender 不再派发 mousemove/globalout，鼠标跟随图标不会自动隐藏，会残留在最后悬浮的省份上
-      const wrapEl = this.$refs.wrap
-      this._onWrapMove = e => {
-        if (this.hoverIcon && e.target && e.target.tagName !== 'CANVAS') this.hoverIcon = ''
+      // 全局兜底（捕获阶段）：鼠标跟随图标只在指针位于本地图画布上时展示。
+      // zrender 的 mousemove/globalout 在「移到 DOM 覆盖层（菜单/面板/卡片）」「快速移出窗口」
+      // 「页面滚动」等场景下不再派发，图标会残留在最后悬浮的省份上，这里统一兜底隐藏
+      this._onDocMove = e => {
+        if (!this.hoverIcon) return
+        const t = e.target
+        const wrap = this.$refs.wrap
+        const onCanvas = !!(t && t.tagName === 'CANVAS' && wrap && wrap.contains(t))
+        if (!onCanvas) this.hoverIcon = ''
       }
-      this._onWrapLeave = () => {
-        this.hoverIcon = ''
+      // 移出浏览器窗口：mouseout 且 relatedTarget 为空
+      this._onDocOut = e => {
+        if (!this.hoverIcon) return
+        if (!e.relatedTarget && !e.toElement) this.hoverIcon = ''
       }
-      if (wrapEl) {
-        wrapEl.addEventListener('mousemove', this._onWrapMove)
-        wrapEl.addEventListener('mouseleave', this._onWrapLeave)
+      // 页面滚动：指针相对地图位置变化，直接隐藏
+      this._onAnyScroll = () => {
+        if (this.hoverIcon) this.hoverIcon = ''
       }
+      document.addEventListener('mousemove', this._onDocMove, true)
+      document.addEventListener('mouseout', this._onDocOut, true)
+      window.addEventListener('scroll', this._onAnyScroll, true)
+      window.addEventListener('blur', this._onAnyScroll)
     },
-    // 解绑容器级兜底事件（与 bindFullscreen 成对）
+    // 解绑全局兜底事件（与 initChart 内绑定成对）
     unbindWrapEvents() {
-      const wrapEl = this.$refs.wrap
-      if (wrapEl) {
-        if (this._onWrapMove) wrapEl.removeEventListener('mousemove', this._onWrapMove)
-        if (this._onWrapLeave) wrapEl.removeEventListener('mouseleave', this._onWrapLeave)
+      if (this._onDocMove) document.removeEventListener('mousemove', this._onDocMove, true)
+      if (this._onDocOut) document.removeEventListener('mouseout', this._onDocOut, true)
+      if (this._onAnyScroll) {
+        window.removeEventListener('scroll', this._onAnyScroll, true)
+        window.removeEventListener('blur', this._onAnyScroll)
       }
-      this._onWrapMove = null
-      this._onWrapLeave = null
+      this._onDocMove = null
+      this._onDocOut = null
+      this._onAnyScroll = null
     },
     // 加载并注册省市区县边界 GeoJSON（本地文件，webpack 动态 import 按需加载异步 chunk），成功后重绘
     async loadRegionMap() {
@@ -403,9 +415,13 @@ export default {
     buildSeries() {
       const groups = {}
       this.points.forEach(p => {
-        const lng = Number(p[this.fieldMap.lng])
-        const lat = Number(p[this.fieldMap.lat])
-        if (isNaN(lng) || isNaN(lat)) return
+        const lngRaw = p[this.fieldMap.lng]
+        const latRaw = p[this.fieldMap.lat]
+        const lng = Number(lngRaw)
+        const lat = Number(latRaw)
+        // 坐标缺失（null/undefined）或不可解析 → 丢弃该点（Number(null)=0，不能用 isNaN 单独拦截）
+        if (lngRaw == null || latRaw == null || lngRaw === '' || latRaw === '' ||
+          isNaN(lng) || isNaN(lat)) return
         const cat = p[this.fieldMap.category]
         const arr = groups[cat] || (groups[cat] = [])
         const icon = this.subsidyIcons[p.subsidy]
@@ -537,15 +553,16 @@ export default {
               // 选中项在当前层级不可展示（如标杆电价下钻到省）时回退为全部，避免出现空浮层
               const rows = (list.length ? list : base)
                 .map(item => {
-                  const v = data ? data[item.field] : undefined
-                  const hasV = v !== undefined && v !== null && v !== ''
+                  // 取值兼容：avgXxx 为 null 时回退 xxx 字段，字符串数值（"0.4155"）可解析
+                  const v = data ? pickPriceValue(data, item.fields || item.field) : null
+                  const hasV = v !== null
                   // 每行前置价格图标（原型：icon + 电价）
                   const icon = `<img src="${priceIcon}" style="width:14px;height:14px;vertical-align:-3px;margin-right:4px;">`
                   const priceHtml = `${icon}<b>${hasV ? v : '--'}</b>`
                   // noDiff：标杆电价本身取自 spot，无独立 spot 均价可比，只展示数值不展示差值
                   if (item.noDiff) return priceHtml
-                  const spot = data ? data[item.spotField] : undefined
-                  const hasSpot = spot !== undefined && spot !== null && spot !== ''
+                  const spot = data ? pickPriceValue(data, item.spotField) : null
+                  const hasSpot = spot !== null
                   const vn = Number(v)
                   const sn = Number(spot)
                   let diffHtml = '<span style="color:#909399;">--</span>'
@@ -1068,6 +1085,9 @@ export default {
   &__point-card-footer {
     margin-top: 2px;
     text-align: right;
+    position: absolute;
+    right: 12px;
+    bottom: 36px;
   }
 
   &__point-card-detail {

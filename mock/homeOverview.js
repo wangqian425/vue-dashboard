@@ -64,9 +64,10 @@ function randomInt(min, max, seed) {
 }
 
 // 特殊省份拆分区域（业务规则，与前端 config REGION_SPLIT 保持一致）：内蒙古→蒙西/蒙东，河北→冀北/河北南网
+// 结构与前端 REGION_SPLIT 一致（对象含 name），避免字符串取 .name 得 undefined
 const PROVINCE_SPLIT = {
-  内蒙古: ['蒙西', '蒙东'],
-  河北: ['冀北', '河北南网']
+  内蒙古: [{ name: '蒙西' }, { name: '蒙东' }],
+  河北: [{ name: '冀北' }, { name: '冀南' }]
 }
 
 // 短名 → 接口全称（山东省/内蒙古自治区等）
@@ -94,6 +95,17 @@ function buildRankItems(names, rankingType, seedBase) {
   })).sort((a, b) => b.value - a.value)
 }
 
+// 取该省真实地市名（与 GeoJSON 区域一致），用于点位 cityName
+function pickCityName(province, seed) {
+  const geo = loadProvinceGeo(province.code)
+  const names = geo && Array.isArray(geo.features)
+    ? geo.features.map(f => (f.properties && f.properties.name) || '').filter(Boolean)
+    : []
+  if (!names.length) return `${province.name}市区`
+  const idx = Math.abs(Math.floor(Math.sin(seed) * 10000)) % names.length
+  return names[idx]
+}
+
 // 生成地图展示数据（mapDisplay）：每省 = 电价汇总 + 项目列表
 // projectList 分类口径（业务规则）：
 //   无补贴：natProject != 1
@@ -108,7 +120,8 @@ function buildMapProject(province, seed) {
     projectName: `${province.name}${seed % 2 === 0 ? '风电' : '光伏'}项目${seed}号`,
     projectCode: `PJ${province.code}${String(seed).padStart(3, '0')}`,
     provinceName: fullProvinceName(province.name),
-    cityName: `${province.name}市区`,
+    // 地市名取真实值（与 GeoJSON 区域一致），便于前端按 REGION_SPLIT 映射地区分类（蒙西/蒙东等）
+    cityName: pickCityName(province, seed),
     longitude: String(province.lng + randomInt(-15, 15, seed) / 10),
     latitude: String(province.lat + randomInt(-15, 15, seed) / 10),
     natProject: nat === null ? null : String(nat),

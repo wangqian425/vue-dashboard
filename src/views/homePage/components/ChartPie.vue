@@ -140,16 +140,17 @@ export default {
             orient: 'vertical',
             right: 0,
             top: 'middle',
-            itemWidth: 10,
-            itemHeight: 10,
-            itemGap: 10,
+            // 原型：每个类型项有最小行高（图标 12 + 行距 16 ≈ 28px/行），列表更舒展、易点选
+            itemWidth: 12,
+            itemHeight: 12,
+            itemGap: 16,
             textStyle: {
               fontSize: 12,
               color: '#606266',
               // 图例两列排版：label 深色固定宽度对齐，value 蓝色（数值+占比）
               rich: {
-                label: { color: '#303133', fontSize: 12, width: 70, align: 'left' },
-                value: { color: '#1890ff', fontSize: 12, fontWeight: 600, align: 'left' }
+                label: { color: '#303133', fontSize: 12, width: 70, align: 'left', lineHeight: 18 },
+                value: { color: '#1890ff', fontSize: 12, fontWeight: 600, align: 'left', lineHeight: 18 }
               }
             },
             formatter: name => {

@@ -172,10 +172,12 @@ import {
   BUILD_FILTERS,
   SUBSIDY_FILTERS,
   PRICE_OPTIONS,
+  pickPriceValue,
   STATUS_PARAM_MAP,
   INDUSTRY_ALL,
   provinceShortName,
   findProvince,
+  toCoordNumber,
   PROVINCE_CAPITALS,
   station_type,
   fullscreenIcon
@@ -428,8 +430,9 @@ export default {
           list.push(Object.assign({}, item, {
             id: item.projectCode,
             name: item.projectName,
-            lng: item.longitude,
-            lat: item.latitude,
+            // 经纬度兼容逗号小数（"110,807"→110.807）；无效坐标由地图组件丢弃该点
+            lng: toCoordNumber(item.longitude),
+            lat: toCoordNumber(item.latitude),
             category: cat.id,
             // 补贴类型名与 station_type 图标 key 一致（无补贴/有补贴/合规清单）
             categoryName: cat.name,
@@ -443,26 +446,37 @@ export default {
     },
     // 地图着色数据：按左下角选中的电价维度取聚合值
     // 全国视图 → 各省汇总值；省份下钻 → 该省各市区值（按市区粒度着色，visualMap 随之展示）
+    // 取值兼容：字段候选列表（avgXxx 为 null 时回退 xxx）+ 字符串数值（"0.4155"）；
+    // 电价取值兼容：字段候选（avgXxx 为 null 时回退 xxx）+ 字符串数值（"0.3655"）；
+    // 真实结算电价数值较小（0.0001~0.3655），0 也是有效值 —— 可解析即入色阶，仅字段缺失保持白色
     // 未选中（priceType 为空）→ 返回空数组，地图不着色（纯白，交互7）
     provincePrices() {
       const option = PRICE_OPTIONS.find(o => o.id === this.priceType)
       if (!option) return []
+      const toDatum = (name, obj) => {
+        const raw = pickPriceValue(obj, option.fields)
+        const num = raw === null ? NaN : Number(raw)
+        // 真实结算电价可能是小数值（0.0001~0.3655），0 也是有效结算价：
+        // 只要可解析且 >= 0 就入色阶（visualMap min/max 按数据自适应拉开对比）；
+        // 仅字段缺失（null/空/不可解析）视为无数据保持白色
+        if (!name || isNaN(num) || num < 0) return null
+        return { name, value: num }
+      }
       if (this.query.level === 'country') {
         return this.provinceGroups
           .map(group => {
-            const first = (group.projectList || [])[0] || {}
-            return {
-              name: provinceShortName(first.provinceName || ''),
-              value: Number(group[option.field]) || 0
-            }
+            // 优先取分组级省名（省名 key 归一化时已补齐），项目内长地名（"内蒙古自治区阿拉善左旗…"）作兜底
+            const name = provinceShortName(group.provinceName ||
+              ((group.projectList || [])[0] || {}).provinceName || '')
+            return toDatum(name, group)
           })
-          .filter(d => d.name)
+          .filter(d => d && d.name)
       }
       // 省份下钻：按市区粒度着色（mapDisplay 返回 cityPriceList，名称与地图区域一致）
       const group = this.provinceGroups[0] || {}
       return (group.cityPriceList || [])
-        .map(c => ({ name: c.name, value: Number(c[option.field]) || 0 }))
-        .filter(d => d.name)
+        .map(c => toDatum(c.name, c))
+        .filter(d => d && d.name)
     },
     // 地图点位：按右上角状态筛选 + 右下角补贴属性筛选（均为多选）
     // 状态筛选未勾选时展示全量（在建 + 运营），勾选后仅显示对应状态（原型注5）
@@ -484,8 +498,9 @@ export default {
         return map
       }
       this.provinceGroups.forEach(group => {
-        const first = (group.projectList || [])[0] || {}
-        const name = provinceShortName(first.provinceName || '')
+        // 优先取分组级省名（省名 key 归一化时已补齐），项目内长地名作兜底
+        const name = provinceShortName(group.provinceName ||
+          ((group.projectList || [])[0] || {}).provinceName || '')
         map[name] = Object.assign({ projectCount: (group.projectList || []).length }, group)
       })
       return map
@@ -509,6 +524,12 @@ export default {
     },
     // 排名维度切换 → 只刷新排名，其它报表无需重取
     'query.rankType'() {
+      // 层级切换引起的枚举校正不单独发请求（fetchAll 已统一刷新），
+      // 否则 fetchRank 的序号晚于同批，会把地图等响应误判为过期丢弃
+      if (this._suppressRankFetch) {
+        this._suppressRankFetch = false
+        return
+      }
       this.fetchRank()
     },
     // 运营项目情况能源类型切换（风电/光伏/非标）：只重新请求运营项目情况，不影响其它报表
@@ -519,6 +540,7 @@ export default {
     'query.level'(level) {
       const options = level === 'country' ? RANK_TYPES : REGION_RANK_TYPES
       if (!options.some(t => t.value === this.query.rankType)) {
+        this._suppressRankFetch = true
         this.query.rankType = options[0].value
       }
     }
@@ -548,7 +570,10 @@ export default {
     },
     // 项目总览报表：POST queryProjectOverview，入参 = 全局报表参数
     async fetchOverview(seq = this.nextSeq()) {
-      const data = await this.safeRequest(() => queryProjectOverview(this.reportParams), {})
+      const data = await this.safeRequest(() => queryProjectOverview({
+        ...this.reportParams,
+        industry: ''
+      }), {})
       if (this.isStale(seq)) return
       this.overview = data || {}
       // 行业 tabs 计数独立保存：分类全部取消选中时页面数据清空，但筛选器需保留供重新选择
@@ -605,12 +630,27 @@ export default {
       ])
     },
     // 地图展示：POST queryMapDisplay，入参 = 全局报表参数
-    // 全国返回省份数组 / 省份返回单对象，统一归一化为省份数组 provinceGroups
+    // 返回结构兼容三种形态，统一归一化为省份数组 provinceGroups：
+    //   1. 数组 [{ provinceName, projectList, ... }]
+    //   2. 单对象（省份下钻：{ projectList, cityPriceList, ... }）
+    //   3. 省名 → 数据的对象映射（真实接口形态：{ 上海市: {...}, 天津市: {...} }）
     async fetchMapDisplay(seq = this.nextSeq()) {
       const data = await this.safeRequest(() => queryMapDisplay(this.reportParams), [])
       if (this.isStale(seq)) return
-      const groups = Array.isArray(data) ? data : (data ? [data] : [])
-      this.provinceGroups = groups
+      this.provinceGroups = this.normalizeProvinceGroups(data)
+      console.log('this.provinceGroups------', this.provinceGroups)
+    },
+    // mapDisplay 返回归一化：数组 / 单对象 / 省名 key 映射 → 省份数组
+    normalizeProvinceGroups(data) {
+      if (Array.isArray(data)) return data
+      if (data && typeof data === 'object') {
+        const looksLikeSingleGroup = data.projectList || data.cityPriceList ||
+          data.avgSettlementPrice !== undefined || data.avgWindSettlementPrice !== undefined
+        if (looksLikeSingleGroup) return [data]
+        // 省名 key 映射：把 key 补成 provinceName（项目条目内也有 provinceName，二者一致）
+        return Object.keys(data).map(key => Object.assign({ provinceName: key }, data[key]))
+      }
+      return []
     },
     handleCategoryChange(value) {
       this.query.category = value
@@ -630,7 +670,13 @@ export default {
         this.drillToProvince(row.code, row.name)
       }
     },
-    drillToProvince(code, name) {
+    drillToProvince(code, name, region = '') {
+      // 先校正排名维度（在 level 变化前）：保证本批请求携带正确的 rankingType，
+      // 否则 fetchAll 发请求时仍是旧维度，而 tabs 已切到新维度，展示与数据不一致
+      if (!REGION_RANK_TYPES.some(t => t.value === this.query.rankType)) {
+        this._suppressRankFetch = true
+        this.query.rankType = REGION_RANK_TYPES[0].value
+      }
       this.query.level = 'province'
       this.query.provinceCode = code
       this.query.cityCode = ''
@@ -648,6 +694,11 @@ export default {
     },
     // 地图「返回」：回到全国视图
     handleMapBack() {
+      // 先校正排名维度（在 level 变化前），保证本批请求携带正确的 rankingType
+      if (!RANK_TYPES.some(t => t.value === this.query.rankType)) {
+        this._suppressRankFetch = true
+        this.query.rankType = RANK_TYPES[0].value
+      }
       this.query.level = 'country'
       this.query.provinceCode = ''
       this.query.cityCode = ''
