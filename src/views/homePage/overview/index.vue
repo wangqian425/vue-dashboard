@@ -175,9 +175,11 @@ import {
   pickPriceValue,
   STATUS_PARAM_MAP,
   INDUSTRY_ALL,
+  PROVINCE_LIST,
   provinceShortName,
   findProvince,
   toCoordNumber,
+  cityRegionName,
   PROVINCE_CAPITALS,
   station_type,
   fullscreenIcon
@@ -472,11 +474,28 @@ export default {
           })
           .filter(d => d && d.name)
       }
-      // 省份下钻：按市区粒度着色（mapDisplay 返回 cityPriceList，名称与地图区域一致）
+      // 省份下钻：mapDisplay 返回 cityPriceList（名称与地图区域一致，请求不按区域拆分）
+      // 拆分省份（内蒙古/河北）按业务区域分类着色：同一区域所有城市取该区域均价，同区域同色；
+      // 其它省份仍按市区粒度逐城着色
       const group = this.provinceGroups[0] || {}
-      return (group.cityPriceList || [])
-        .map(c => toDatum(c.name, c))
+      const cities = Array.isArray(group.cityPriceList) ? group.cityPriceList : []
+      const regionAvg = this.regionAvgMap(cities, option.fields)
+      return cities
+        .map(c => {
+          const region = cityRegionName(this.currentProvinceShort, c.name)
+          if (!region) return toDatum(c.name, c)
+          const avg = regionAvg[region]
+          if (avg === undefined) return null
+          return { name: c.name, value: avg }
+        })
         .filter(d => d && d.name)
+    },
+    // 当前下钻省份的短名（内蒙古/河北…），用于地区分类映射；全国视图为空
+    currentProvinceShort() {
+      if (this.query.level !== 'province') return ''
+      const hit = PROVINCE_LIST.find(p => p.code === this.query.provinceCode)
+      if (hit) return hit.name
+      return provinceShortName((this.levels[this.levels.length - 1] || {}).name || '')
     },
     // 地图点位：按右上角状态筛选 + 右下角补贴属性筛选（均为多选）
     // 状态筛选未勾选时展示全量（在建 + 运营），勾选后仅显示对应状态（原型注5）
@@ -488,12 +507,29 @@ export default {
     },
     // 区域悬浮浮层数据（交互8）：区域名 → 电价汇总 + 项目数
     // 全国视图按省聚合；省份下钻按市区粒度（cityPriceList）
+    // 拆分省份（内蒙古/河北）同区域城市合并为一条区域数据（电价取均值、项目数求和），
+    // 与地图按区域分类着色保持一致；其它省份按城市原样展示
     provincePriceMap() {
       const map = {}
       if (this.query.level === 'province') {
         const group = this.provinceGroups[0] || {}
-        ;(group.cityPriceList || []).forEach(c => {
-          map[c.name] = Object.assign({ projectCount: c.projectCount || 0 }, c)
+        const cities = Array.isArray(group.cityPriceList) ? group.cityPriceList : []
+        const buckets = {}
+        cities.forEach(c => {
+          const region = cityRegionName(this.currentProvinceShort, c.name)
+          if (!region) {
+            map[c.name] = Object.assign({ projectCount: c.projectCount || 0 }, c)
+            return
+          }
+          if (!buckets[region]) buckets[region] = { items: [] }
+          buckets[region].items.push(c)
+        })
+        Object.keys(buckets).forEach(region => {
+          const items = buckets[region].items
+          const merged = Object.assign({ name: region }, this.mergeRegionValues(items))
+          // 浮层顶部展示区域名（蒙西/蒙东、冀北/河北南网）
+          merged._regionName = region
+          items.forEach(c => { map[c.name] = merged })
         })
         return map
       }
@@ -691,6 +727,39 @@ export default {
       if (this.query.level === 'country') {
         this.drillToProvince(province.code, province.name)
       }
+    },
+    // 城市列表 → 各拆分区域的均价（电价取平均；0 也是有效结算价，仅不可解析/负值不参与）
+    regionAvgMap(cities, fields) {
+      const sum = {}
+      const count = {}
+      ;(cities || []).forEach(c => {
+        const region = cityRegionName(this.currentProvinceShort, c.name)
+        if (!region) return
+        const raw = pickPriceValue(c, fields)
+        const num = raw === null ? NaN : Number(raw)
+        if (isNaN(num) || num < 0) return
+        sum[region] = (sum[region] || 0) + num
+        count[region] = (count[region] || 0) + 1
+      })
+      const avg = {}
+      Object.keys(sum).forEach(r => { avg[r] = sum[r] / count[r] })
+      return avg
+    },
+    // 同区域城市合并：数值字段取平均、项目数求和，其余字段取首个非空值
+    mergeRegionValues(items) {
+      const keys = []
+      items.forEach(item => Object.keys(item).forEach(k => { if (keys.indexOf(k) < 0) keys.push(k) }))
+      const merged = {}
+      keys.forEach(key => {
+        const vals = items.map(i => i[key]).filter(v => v !== undefined && v !== null && v !== '')
+        if (!vals.length) return
+        const nums = vals.map(v => (typeof v === 'number' ? v : parseFloat(String(v).trim())))
+        const allNum = nums.every(n => !isNaN(n))
+        merged[key] = allNum ? nums.reduce((a, b) => a + b, 0) / nums.length : vals[0]
+      })
+      // 项目数按求和（不是平均）
+      merged.projectCount = items.reduce((sum, i) => sum + (Number(i.projectCount) || 0), 0)
+      return merged
     },
     // 地图「返回」：回到全国视图
     handleMapBack() {

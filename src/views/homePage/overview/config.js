@@ -364,8 +364,23 @@ export const REGION_SPLIT = {
   ],
   河北: [
     { name: '冀北', cities: ['唐山', '张家口', '秦皇岛', '承德', '廊坊'] },
-    { name: '冀南', cities: ['石家庄', '保定', '沧州', '衡水', '邢台', '邯郸'] }
+    { name: '河北南网', cities: ['石家庄', '保定', '沧州', '衡水', '邢台', '邯郸'] }
   ]
+}
+
+// 城市名 → 所属拆分区域（蒙西/蒙东、冀北/河北南网）
+// 只用于下钻后的地图展示（接口数据不变），非拆分省份或未匹配返回 ''
+export function cityRegionName(provinceShortName, cityName) {
+  const groups = REGION_SPLIT[provinceShortName]
+  if (!groups || !cityName) return ''
+  // 去行政后缀后匹配（呼和浩特市→呼和浩特、锡林郭勒盟→锡林郭勒）
+  const name = String(cityName).replace(/(自治州|地区|市|盟|区|县)$/, '')
+  if (!name) return ''
+  const hit = groups.find(g => g.cities.some(c => {
+    const city = String(c).replace(/(自治州|地区|市|盟|区|县)$/, '')
+    return city === name || city.indexOf(name) === 0 || name.indexOf(city) === 0
+  }))
+  return hit ? hit.name : ''
 }
 
 // 接口全称（山东省/内蒙古自治区）→ 地图短名（山东/内蒙古）

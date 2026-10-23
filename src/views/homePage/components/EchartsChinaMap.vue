@@ -579,7 +579,11 @@ export default {
                   return `${priceHtml}（${diffHtml}）`
                 })
                 .join('<br/>')
-              return this.wrapTooltip(`${rows}`)
+              // 拆分省份（内蒙古/河北）下钻：浮层先展示业务区域名（蒙西/蒙东、冀北/河北南网）
+              const regionHead = data && data._regionName
+                ? `<div style="font-size:12px;opacity:.85;margin-bottom:2px;">${data._regionName}</div>`
+                : ''
+              return this.wrapTooltip(`${regionHead}${rows}`)
             }
             return ''
           }
