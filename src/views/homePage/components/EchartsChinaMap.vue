@@ -448,7 +448,7 @@ export default {
         } else if (this.hoverIcon) {
           this.hoverIcon = "";
         }
-      });
+      }); //
       this.chart.on("globalout", () => {
         this.hoverIcon = "";
       });
